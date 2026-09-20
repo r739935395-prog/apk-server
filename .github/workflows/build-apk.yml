@@ -11,22 +11,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install Android SDK (basic)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq android-sdk android-sdk-platform-tools 2>/dev/null || true
+          # If apt packages aren't available, rely on runner preinstalled SDK
+          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/lib/android-sdk}" >> $GITHUB_ENV
       - name: Install Gradle
         run: |
           wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
           sudo unzip -q gradle-8.7-bin.zip -d /opt
           echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
+      - name: Accept SDK licenses
+        run: |
+          yes | sdkmanager --licenses || true
+          yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses 2>/dev/null || true
       - name: Build APK
         working-directory: Download/RafatAccountingApp_AndroidProject/RafatAccountingApp
         run: |
-          echo "gradlew missing, using installed gradle"
-          gradle assembleDebug || gradle assembleRelease
+          chmod +x gradlew 2>/dev/null || true
+          ./gradlew assembleDebug || gradle assembleDebug || gradle assembleRelease
+        env:
+          ANDROID_HOME: /usr/lib/android-sdk
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
