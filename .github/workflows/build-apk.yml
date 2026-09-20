@@ -29,8 +29,20 @@ jobs:
           echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
       - name: Accept SDK licenses
         run: |
-          yes | sdkmanager --licenses || true
-          yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses 2>/dev/null || true
+          export ANDROID_HOME=/usr/lib/android-sdk
+          export ANDROID_SDK_ROOT=/usr/lib/android-sdk
+          # Find sdkmanager
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/tools/bin/sdkmanager"
+          fi
+          if [ ! -f "$SDKMANAGER" ]; then
+            echo "sdkmanager not found at expected paths"
+          else
+            yes | "$SDKMANAGER" --licenses || true
+          fi
+          # Also accept via yes to all prompts
+          echo "y" | yes | "$SDKMANAGER" --licenses || true
       - name: Build APK
         working-directory: Download/RafatAccountingApp_AndroidProject/RafatAccountingApp
         run: |
