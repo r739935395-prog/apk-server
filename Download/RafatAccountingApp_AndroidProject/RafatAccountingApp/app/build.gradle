@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace 'com.rafat.accounting'
-    compileSdk 35
+    compileSdk 29
 
     defaultConfig {
         applicationId "com.rafat.accounting"
         minSdk 23
-        targetSdk 35
+        targetSdk 29
         versionCode 1
         versionName "1.0"
     }
