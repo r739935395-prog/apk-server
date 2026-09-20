@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rafat Al-Majidi - Personal Accounting</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--accent:#38bdf8;--inc:#34d399;--exp:#f87171;--txt:#e2e8f0;--mut:#94a3b8}
+  *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:18px}
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  header h1{font-size:20px;margin:0}
+  header .sub{color:var(--mut);font-size:13px}
+  .grid{display:grid;gap:14px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:14px}
+  .card{background:var(--card);border-radius:12px;padding:14px}
+  .card .lbl{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  .card .val{font-size:24px;font-weight:700;margin-top:6px}
+  .inc{color:var(--inc)} .exp{color:var(--exp)} .bal{color:var(--accent)}
+  .panel{background:var(--card);border-radius:12px;padding:16px}
+  .panel h2{font-size:15px;margin:0 0 12px}
+  label{display:block;font-size:12px;color:var(--mut);margin:8px 0 4px}
+  input,select,button{width:100%;padding:9px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:var(--txt);font-size:14px}
+  button{background:var(--accent);color:#06283d;border:none;font-weight:700;cursor:pointer;margin-top:12px}
+  button:hover{filter:brightness(1.08)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .seg{display:flex;gap:8px;margin-top:4px}
+  .seg button{margin:0}
+  .seg button.off{background:#334155;color:var(--mut)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #334155}
+  th{color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase}
+  td.amt{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+  .pill.i{background:rgba(52,211,153,.15);color:var(--inc)}
+  .pill.e{background:rgba(248,113,113,.15);color:var(--exp)}
+  .del{background:#7f1d1d;color:#fecaca;width:auto;padding:4px 10px;margin:0;font-size:12px}
+  .bar{height:18px;background:#334155;border-radius:6px;overflow:hidden;margin:4px 0}
+  .bar > span{display:block;height:100%;background:var(--exp)}
+  .muted{color:var(--mut);font-size:12px}
+  .filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:10px}
+  .empty{color:var(--mut);text-align:center;padding:18px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Rafat Al-Majidi &middot; Personal Accounting</h1>
+    <div class="sub">Your private, offline finance dashboard</div>
+  </div>
+  <div class="muted" id="updated"></div>
+</header>
+
+<div class="grid cards">
+  <div class="card"><div class="lbl">Total Income</div><div class="val inc" id="sumInc">0</div></div>
+  <div class="card"><div class="lbl">Total Expense</div><div class="val exp" id="sumExp">0</div></div>
+  <div class="card"><div class="lbl">Net Balance</div><div class="val bal" id="sumBal">0</div></div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
+  <div class="panel">
+    <h2>Add Transaction</h2>
+    <div class="seg">
+      <button id="bExp" onclick="setType('expense')">Expense</button>
+      <button id="bInc" class="off" onclick="setType('income')">Income</button>
+    </div>
+    <input type="hidden" id="type" value="expense">
+    <label>Amount</label>
+    <input type="number" id="amount" step="0.01" min="0" placeholder="0.00">
+    <label>Category</label>
+    <select id="category"></select>
+    <label>Account</label>
+    <select id="account"></select>
+    <div class="row">
+      <div><label>Date</label><input type="date" id="date"></div>
+      <div><label>&nbsp;</label><button onclick="addTx()">Add</button></div>
+    </div>
+    <label>Note</label>
+    <input type="text" id="note" placeholder="Optional description">
+  </div>
+
+  <div class="panel">
+    <h2>Spending by Category</h2>
+    <div id="cats"><div class="empty">No expenses yet</div></div>
+    <h2 style="margin-top:18px">Accounts</h2>
+    <div id="accts"></div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:14px">
+  <h2>Transactions</h2>
+  <div class="filters">
+    <select id="fType" onchange="loadTx()">
+      <option value="">All types</option><option value="income">Income</option><option value="expense">Expense</option>
+    </select>
+    <select id="fAccount" onchange="loadTx()"><option value="">All accounts</option></select>
+    <input type="date" id="fFrom" onchange="loadTx()">
+    <input type="date" id="fTo" onchange="loadTx()">
+    <input type="text" id="fQ" placeholder="Search note..." oninput="loadTx()">
+  </div>
+  <table>
+    <thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Account</th><th>Note</th><th class="amt">Amount</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="emptyTx" style="display:none">No transactions match your filters</div>
+</div>
+
+<script>
+const INCCATS=["Salary","Business","Gift","Investment","Refund","Other"];
+const EXPCATS=["Food","Transport","Bills","Shopping","Health","Entertainment","Education","Rent","Other"];
+const money=n=>Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+let TYPE="expense";
+
+function setType(t){
+  TYPE=t;
+  document.getElementById("type").value=t;
+  document.getElementById("bExp").className = t==="expense"?"":"off";
+  document.getElementById("bInc").className = t==="income"?"":"off";
+  fillCats();
+}
+function fillCats(){
+  const sel=document.getElementById("category");
+  const list=TYPE==="income"?INCCATS:EXPCATS;
+  sel.innerHTML=list.map(c=>`<option>${c}</option>`).join("");
+}
+
+function dbGet(key, fallback){
+  try { const v=localStorage.getItem(key); return v===null ? fallback : JSON.parse(v); }
+  catch(e){ return fallback; }
+}
+function dbSet(key, value){ localStorage.setItem(key, JSON.stringify(value)); }
+
+function getAccounts(){
+  let a=dbGet("accounts", null);
+  if(!a){
+    a=[{id:1,name:"Rafat Al-Majidi's Account",note:"Default personal account"}];
+    dbSet("accounts",a);
+  }
+  return a;
+}
+function getTx(){ return dbGet("transactions", []); }
+
+async function loadAccounts(){
+  const a=getAccounts();
+  const sel=document.getElementById("account");
+  sel.innerHTML=a.map(x=>`<option value="${x.id}">${x.name}</option>`).join("");
+  const f=document.getElementById("fAccount");
+  f.innerHTML='<option value="">All accounts</option>'+a.map(x=>`<option value="${x.id}">${x.name}</option>`).join("");
+  document.getElementById("accts").innerHTML=a.length?a.map(x=>`<div class="muted">${x.name}</div>`).join(""):'<div class="empty">No accounts</div>';
+}
+
+async function loadSummary(){
+  const tx=getTx();
+  const inc=tx.filter(x=>x.type==="income").reduce((s,x)=>s+Number(x.amount),0);
+  const exp=tx.filter(x=>x.type==="expense").reduce((s,x)=>s+Number(x.amount),0);
+  document.getElementById("sumInc").textContent=money(inc);
+  document.getElementById("sumExp").textContent=money(exp);
+  document.getElementById("sumBal").textContent=money(inc-exp);
+  document.getElementById("updated").textContent="Owner: Rafat Al-Majidi";
+
+  const by={};
+  tx.filter(x=>x.type==="expense").forEach(x=>by[x.category]=(by[x.category]||0)+Number(x.amount));
+  const cats=Object.entries(by).sort((a,b)=>b[1]-a[1]);
+  const c=document.getElementById("cats");
+  if(cats.length){
+    const max=cats[0][1];
+    c.innerHTML=cats.map(([cat,total])=>`<div>${cat} <span class="muted">(${money(total)})</span></div><div class="bar"><span style="width:${(total/max*100).toFixed(1)}%"></span></div>`).join("");
+  } else c.innerHTML='<div class="empty">No expenses yet</div>';
+}
+
+async function loadTx(){
+  const type=document.getElementById("fType").value;
+  const account=document.getElementById("fAccount").value;
+  const from=document.getElementById("fFrom").value;
+  const to=document.getElementById("fTo").value;
+  const q=document.getElementById("fQ").value.trim().toLowerCase();
+
+  let rows=getTx();
+  rows=rows.filter(r=>
+    (!type || r.type===type) &&
+    (!account || String(r.account_id)===String(account)) &&
+    (!from || r.tdate>=from) &&
+    (!to || r.tdate<=to) &&
+    (!q || (r.note||"").toLowerCase().includes(q))
+  );
+  rows.sort((a,b)=> b.tdate.localeCompare(a.tdate) || b.id-a.id);
+
+  const accounts=getAccounts();
+  const amap=Object.fromEntries(accounts.map(a=>[a.id,a.name]));
+  const tb=document.getElementById("rows");
+  document.getElementById("emptyTx").style.display=rows.length?"none":"block";
+  tb.innerHTML=rows.map(r=>`<tr>
+    <td>${r.tdate}</td>
+    <td><span class="pill ${r.type==='income'?'i':'e'}">${r.type}</span></td>
+    <td>${r.category}</td>
+    <td>${amap[r.account_id]||'-'}</td>
+    <td>${(r.note||'').replace(/</g,'&lt;')}</td>
+    <td class="amt ${r.type==='income'?'inc':'exp'}">${r.type==='income'?'+':'-'}${money(r.amount)}</td>
+    <td><button class="del" onclick="delTx(${r.id})">x</button></td>
+  </tr>`).join("");
+}
+
+async function addTx(){
+  const amount=parseFloat(document.getElementById("amount").value);
+  if(!(amount>0)){alert("Enter a valid amount");return;}
+  const tx=getTx();
+  const date=document.getElementById("date").value || new Date().toISOString().slice(0,10);
+  const nextId=tx.length ? Math.max(...tx.map(x=>Number(x.id)))+1 : 1;
+  tx.push({
+    id:nextId, type:TYPE, amount:Number(amount.toFixed(2)),
+    category:document.getElementById("category").value,
+    account_id:document.getElementById("account").value||null,
+    note:document.getElementById("note").value,
+    tdate:date
+  });
+  dbSet("transactions",tx);
+  document.getElementById("amount").value="";
+  document.getElementById("note").value="";
+  refresh();
+}
+
+async function delTx(id){
+  if(!confirm("Delete this transaction?"))return;
+  dbSet("transactions",getTx().filter(x=>Number(x.id)!==Number(id)));
+  refresh();
+}
+
+function refresh(){loadSummary();loadTx();}
+
+(async function init(){
+  document.getElementById("date").value=new Date().toISOString().slice(0,10);
+  setType("expense");
+  await loadAccounts();
+  refresh();
+})();
+</script>
+</body>
+</html>
