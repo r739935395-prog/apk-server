@@ -15,8 +15,18 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          sudo unzip -q gradle-8.7-bin.zip -d /opt
+          echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
       - name: Build APK
-        run: ./gradlew assembleDebug || ./gradlew assembleRelease
+        working-directory: Download/RafatAccountingApp_AndroidProject/RafatAccountingApp
+        run: |
+          echo "gradlew missing, using installed gradle"
+          gradle assembleDebug || gradle assembleRelease
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
