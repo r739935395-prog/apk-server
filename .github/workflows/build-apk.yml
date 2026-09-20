@@ -27,22 +27,17 @@ jobs:
           wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
           sudo unzip -q gradle-8.7-bin.zip -d /opt
           echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
-      - name: Accept SDK licenses
+      - name: Accept SDK licenses (manual)
         run: |
           export ANDROID_HOME=/usr/lib/android-sdk
           export ANDROID_SDK_ROOT=/usr/lib/android-sdk
-          # Find sdkmanager
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER="$ANDROID_HOME/tools/bin/sdkmanager"
-          fi
-          if [ ! -f "$SDKMANAGER" ]; then
-            echo "sdkmanager not found at expected paths"
-          else
-            yes | "$SDKMANAGER" --licenses || true
-          fi
-          # Also accept via yes to all prompts
-          echo "y" | yes | "$SDKMANAGER" --licenses || true
+          mkdir -p $ANDROID_HOME/licenses
+          echo "d56f5187479451eabf01fb78af6dfcb131a648ae" > $ANDROID_HOME/licenses/android-sdk-license.txt || true
+          echo "24333f8a63b6825ea9c5514f83c3b3e3f5a7e0b0" >> $ANDROID_HOME/licenses/android-sdk-license.txt || true
+          # Create license files for build-tools and platforms
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_HOME/licenses/android-sdk-preview-license.txt || true
+          # Force accept by copying if files exist elsewhere
+          cp $ANDROID_HOME/licenses/*.txt $ANDROID_HOME/licenses/ 2>/dev/null || true
       - name: Build APK
         working-directory: Download/RafatAccountingApp_AndroidProject/RafatAccountingApp
         run: |
