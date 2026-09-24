@@ -1,12 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DeviceVault" parent="android:Theme.Material3.Dark.NoActionBar">
-        <item name="android:statusBarColor">@color/primary_dark</item>
-        <item name="android:navigationBarColor">@color/primary_dark</item>
-        <item name="android:windowBackground">@color/primary_dark</item>
-        <item name="colorPrimary">@color/gold</item>
-        <item name="colorOnPrimary">@color/primary_dark</item>
-        <item name="colorSurface">@color/surface_dark</item>
-        <item name="colorOnSurface">@color/text_primary</item>
+    <style name="Theme.DeviceVault" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">#0B0B0F</item>
+        <item name="android:statusBarColor">#0B0B0F</item>
+        <item name="android:navigationBarColor">#0B0B0F</item>
+        <item name="colorPrimary">#D4AF37</item>
     </style>
 </resources>

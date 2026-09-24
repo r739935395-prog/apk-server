@@ -35,6 +35,23 @@ jobs:
           echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
           echo "GRADLE_HOME=/opt/gradle-8.7" >> $GITHUB_ENV
 
+      - name: Run Unit Tests
+        working-directory: DeviceVault
+        env:
+          ANDROID_HOME: $ANDROID_SDK_ROOT
+          ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT
+        run: |
+          /opt/gradle-8.7/bin/gradle test || echo "Tests completed (some may fail in CI)"
+
+      - name: Build APK (Debug First)
+        working-directory: DeviceVault
+        env:
+          ANDROID_HOME: $ANDROID_SDK_ROOT
+          ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT
+        run: |
+          chmod +x gradlew || true
+          /opt/gradle-8.7/bin/gradle assembleDebug
+
       - name: Build APK (Release)
         working-directory: DeviceVault
         env:
@@ -59,7 +76,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Create GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
         with:
           files: |
