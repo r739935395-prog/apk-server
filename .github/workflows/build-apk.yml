@@ -12,9 +12,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-    env:
-      ANDROID_HOME: /usr/lib/android-sdk
-      ANDROID_SDK_ROOT: /usr/lib/android-sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,27 +22,11 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Install Android SDK (manual)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq android-sdk android-sdk-platform-tools 2>/dev/null || true
-          # Fallback: rely on preinstalled SDK paths
-          echo "ANDROID_HOME=${ANDROID_HOME}" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
-          # Find sdkmanager
-          SDKMANAGER=$(find /usr/lib/android-sdk -name sdkmanager 2>/dev/null | head -n 1)
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find /usr/local/lib/android/sdk -name sdkmanager 2>/dev/null | head -n 1)
-          fi
-          if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses || true
-            yes | "$SDKMANAGER" --update || true
-            yes | "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" || true
-          fi
-          # Write license files manually for compatibility
-          mkdir -p $ANDROID_HOME/licenses 2>/dev/null || mkdir -p $ANDROID_SDK_ROOT/licenses 2>/dev/null || true
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_HOME/licenses/android-sdk-license.txt 2>/dev/null || echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_SDK_ROOT/licenses/android-sdk-license.txt 2>/dev/null || true
-          echo "24333f8a63b6825ea9c5514f83c3b3e3f5a7e0b0" >> $ANDROID_HOME/licenses/android-sdk-license.txt 2>/dev/null || echo "24333f8a63b6825ea9c5514f83c3b3e3f5a7e0b0" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license.txt 2>/dev/null || true
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          packages: platforms;android-34 build-tools;34.0.0
 
       - name: Install Gradle 8.7
         run: |
@@ -54,26 +35,16 @@ jobs:
           echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
           echo "GRADLE_HOME=/opt/gradle-8.7" >> $GITHUB_ENV
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-
-
       - name: Build APK (Release)
         working-directory: DeviceVault
+        env:
+          ANDROID_HOME: $ANDROID_SDK_ROOT
+          ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT
         run: |
           chmod +x gradlew || true
           /opt/gradle-8.7/bin/gradle assembleRelease || /opt/gradle-8.7/bin/gradle assembleDebug
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
 
       - name: Upload Release APK Artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: devicevault-release-apk
@@ -81,7 +52,6 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Debug APK Artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: devicevault-debug-apk
@@ -89,7 +59,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Create GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           files: |
