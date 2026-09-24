@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">ديفايس فولت</string>
+    <string name="dashboard">لوحة التحكم</string>
+    <string name="device">الجهاز</string>
+    <string name="cpu">المعالج</string>
+    <string name="gpu">معالج الرسوم</string>
+    <string name="memory">الذاكرة</string>
+    <string name="storage">التخزين</string>
+    <string name="battery">البطارية</string>
+    <string name="display">الشاشة</string>
+    <string name="sensors">المستشعرات</string>
+    <string name="network">الشبكة</string>
+    <string name="camera">الكاميرا</string>
+    <string name="system">النظام</string>
+    <string name="about">حول</string>
+    <string name="monitor">مراقبة</string>
+    <string name="settings">الإعدادات</string>
+    <string name="welcome">ديفايس فولت</string>
+    <string name="subtitle">مراقب الأجهزة الاحترافي</string>
+</resources>

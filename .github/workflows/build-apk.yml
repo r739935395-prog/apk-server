@@ -1,55 +1,85 @@
-name: Build APK
+name: Build DeviceVault APK
 
 on:
-  workflow_dispatch:
   push:
     branches: [main, master]
+  workflow_dispatch:
+  pull_request:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      artifacts: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up JDK
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
-      - name: Install Android SDK (basic)
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses and install SDK components
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq android-sdk android-sdk-platform-tools 2>/dev/null || true
-          # If apt packages aren't available, rely on runner preinstalled SDK
-          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/lib/android-sdk}" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=${ANDROID_HOME:-/usr/lib/android-sdk}" >> $GITHUB_ENV
-      - name: Install Gradle
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" || true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Build APK (Release)
+        working-directory: DeviceVault
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          sudo unzip -q gradle-8.7-bin.zip -d /opt
-          echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
-      - name: Accept SDK licenses (manual)
-        run: |
-          export ANDROID_HOME=/usr/lib/android-sdk
-          export ANDROID_SDK_ROOT=/usr/lib/android-sdk
-          SDKMANAGER=$(find $ANDROID_HOME -name sdkmanager 2>/dev/null | head -n 1)
-          if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses || true
-            yes | "$SDKMANAGER" --update || true
-            yes | "$SDKMANAGER" "build-tools;34.0.0" "platforms;android-29" || true
-          fi
-          mkdir -p $ANDROID_HOME/licenses
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_HOME/licenses/android-sdk-license.txt || true
-          echo "24333f8a63b6825ea9c5514f83c3b3e3f5a7e0b0" >> $ANDROID_HOME/licenses/android-sdk-license.txt || true
-      - name: Build APK
-        working-directory: Download/RafatAccountingApp_AndroidProject/RafatAccountingApp
-        run: |
-          chmod +x gradlew 2>/dev/null || true
-          ./gradlew assembleDebug || gradle assembleDebug || gradle assembleRelease
+          chmod +x gradlew || true
+          ./gradlew assembleRelease || gradle assembleRelease || ./gradlew assembleDebug || gradle assembleDebug
         env:
-          ANDROID_HOME: /usr/lib/android-sdk
-          ANDROID_SDK_ROOT: /usr/lib/android-sdk
-      - name: Upload Artifact
+          ANDROID_HOME: $ANDROID_SDK_ROOT
+          ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT
+
+      - name: Build APK (Debug fallback)
+        if: failure()
+        working-directory: DeviceVault
+        run: |
+          chmod +x gradlew || true
+          ./gradlew assembleDebug || gradle assembleDebug
+        env:
+          ANDROID_HOME: $ANDROID_SDK_ROOT
+          ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT
+
+      - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk-output
-          path: '**/*.apk'
+          name: devicevault-release-apk
+          path: DeviceVault/app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: devicevault-debug-apk
+          path: DeviceVault/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            DeviceVault/app/build/outputs/apk/release/*.apk
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

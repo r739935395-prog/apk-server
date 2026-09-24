@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">DeviceVault</string>
+    <string name="dashboard">Dashboard</string>
+    <string name="device">Device</string>
+    <string name="cpu">CPU</string>
+    <string name="gpu">GPU</string>
+    <string name="memory">Memory</string>
+    <string name="storage">Storage</string>
+    <string name="battery">Battery</string>
+    <string name="display">Display</string>
+    <string name="sensors">Sensors</string>
+    <string name="network">Network</string>
+    <string name="camera">Camera</string>
+    <string name="system">System</string>
+    <string name="about">About</string>
+    <string name="monitor">Monitor</string>
+    <string name="settings">Settings</string>
+    <string name="welcome">DeviceVault</string>
+    <string name="subtitle">Premium Hardware Monitor</string>
+</resources>
