@@ -89,7 +89,7 @@ jobs:
             rm -f "$OUT_DIR/libwhatshub_engine.h"
             ls -lh "$OUT_DIR/libwhatshub_engine.so"
             file "$OUT_DIR/libwhatshub_engine.so"
-            readelf -Ws "$OUT_DIR/libwhatshub_engine.so" | grep "Java_com_rafat_whatshub_bridge_NativeBridge_" | head -25
+            readelf -Ws "$OUT_DIR/libwhatshub_engine.so" | grep "Java_com_rafat_whatshub_bridge_NativeBridge_" | grep -v "_cgoexp_"
           } 2>&1 | tee /tmp/go-ndk.log
 
       - name: Android App — Execute Kotlin & Robolectric Unit/Integration Tests
@@ -133,7 +133,7 @@ jobs:
             sha256sum ./app-release.apk
 
             echo "=== AAPT2 BADGING ==="
-            "$AAPT2" dump badging ./app-release.apk | head -35
+            "$AAPT2" dump badging ./app-release.apk | grep -E "^(package:|sdkVersion:|targetSdkVersion:|uses-permission:|application-label|launchable-activity:|native-code:)" || true
 
             echo "=== NATIVE LIBRARIES IN APK ==="
             unzip -l ./app-release.apk | grep -E "lib/.*\.so"
