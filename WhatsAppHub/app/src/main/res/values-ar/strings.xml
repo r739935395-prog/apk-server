@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">واتساب هَب</string>
+
+    <!-- Navigation -->
+    <string name="nav_inbox">البريد الموحد</string>
+    <string name="nav_accounts">الحسابات</string>
+    <string name="nav_contacts">جهات الاتصال</string>
+    <string name="nav_groups">المجموعات</string>
+    <string name="nav_settings">الإعدادات</string>
+
+    <!-- Inbox -->
+    <string name="inbox_title">واتساب هَب</string>
+    <string name="search_placeholder">ابحث في المحادثات أو جهات الاتصال أو الرسائل…</string>
+    <string name="filter_all">الكل</string>
+    <string name="filter_unread">غير المقروءة</string>
+    <string name="filter_groups">المجموعات</string>
+    <string name="filter_direct">الفردية</string>
+    <string name="empty_inbox_title">لا توجد محادثات حتى الآن</string>
+    <string name="empty_inbox_subtitle">اربط ما يصل إلى ٤ حسابات واتساب مستقلة من تبويب الحسابات لعرض وإرسال الرسائل في صندوق وارد موحد.</string>
+    <string name="manage_accounts_cta">إدارة الحسابات</string>
+    <string name="new_chat">محادثة جديدة</string>
+
+    <!-- Account states -->
+    <string name="state_not_connected">غير متصل</string>
+    <string name="state_connecting">جارٍ الاتصال</string>
+    <string name="state_waiting_for_qr">بانتظار مسح رمز QR</string>
+    <string name="state_pairing">جارٍ الربط</string>
+    <string name="state_connected">متصل</string>
+    <string name="state_reconnecting">جارٍ إعادة الاتصال</string>
+    <string name="state_disconnected">مقطوع الاتصال</string>
+    <string name="state_auth_expired">انتهت صلاحية الجلسة</string>
+    <string name="state_connection_error">خطأ في الاتصال</string>
+
+    <!-- Account management -->
+    <string name="account_slot_format">الحساب %1$d</string>
+    <string name="btn_connect_qr">ربط / اتصال</string>
+    <string name="btn_pair_code">الربط برمز رقم الهاتف</string>
+    <string name="btn_reconnect">إعادة الاتصال</string>
+    <string name="btn_disconnect">قطع الاتصال</string>
+    <string name="btn_remove">إزالة الحساب</string>
+    <string name="btn_replace">استبدال</string>
+    <string name="qr_instructions">افتح تطبيق واتساب الرسمي على هاتفك ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز، ثم امسح رمز QR هذا.</string>
+    <string name="pair_code_instructions">أدخل رقم الهاتف مع مفتاح الدولة (أرقام فقط مثل 967771234567)، ثم أدخل الرمز المكون من 8 خانات في واتساب الرسمي ← الربط برقم الهاتف.</string>
+    <string name="pair_code_waiting_confirmation">تم إنشاء الرمز. بانتظار تأكيد الربط من هاتفك الأساسي…</string>
+
+    <!-- Conversation -->
+    <string name="composer_hint">رسالة عبر الحساب %1$d…</string>
+    <string name="sending_via_account">الإرسال حصرياً عبر الحساب %1$d (%2$s)</string>
+    <string name="msg_deleted">تم حذف هذه الرسالة</string>
+    <string name="typing_indicator">يكتب الآن…</string>
+    <string name="btn_attach">إرفاق ملف</string>
+    <string name="btn_record_voice">تسجيل رسالة صوتية</string>
+    <string name="btn_stop_send_voice">إيقاف وإرسال التسجيل</string>
+    <string name="btn_download_media">تنزيل</string>
+    <string name="btn_open_media">فتح</string>
+    <string name="reply_label">رد على</string>
+
+    <!-- Settings & Security Disclosure -->
+    <string name="settings_language">اللغة</string>
+    <string name="lang_english">English (LTR)</string>
+    <string name="lang_arabic">العربية (RTL)</string>
+    <string name="settings_theme">المظهر</string>
+    <string name="theme_dark">داكن (افتراضي)</string>
+    <string name="theme_amoled">أسود داكن AMOLED</string>
+    <string name="theme_light">فاتح</string>
+    <string name="settings_notifications">الإشعارات والخدمة الخلفية</string>
+    <string name="settings_battery_opt">إعداد استثناء تحسين البطارية (One UI 7)</string>
+    <string name="settings_storage">التخزين والوسائط</string>
+    <string name="btn_clear_media_cache">مسح ملفات الوسائط المحملة</string>
+    <string name="settings_backup">النسخ الاحتياطي المحلي المشفر</string>
+    <string name="btn_export_backup">تصدير نسخة احتياطية مشفرة</string>
+    <string name="btn_import_backup">استعادة نسخة احتياطية مشفرة</string>
+    <string name="settings_diagnostics">سجل التشخيص المنقّح</string>
+    <string name="unofficial_warning_title">تنبيه البروتوكول غير الرسمي وإخلاء المسؤولية</string>
+    <string name="unofficial_warning_body">يعتمد تطبيق واتساب هَب على مكتبة whatsmeow المفتوحة المصدر من طرف ثالث لبروتوكول الأجهزة المرتبطة، وهو غير تابع لشركة واتساب أو ميتا. قد يترتب على استخدام عملاء غير رسميين قيود مؤقتة أو حظر للحساب وفق شروط خدمة واتساب ولا يوجد ضمان بعدم تقييد الحساب. المكالمات الصوتية والمرئية وإدارة القوائم البريدية غير مدعومة.</string>
+
+    <!-- Foreground Service -->
+    <string name="fgs_channel_name">اتصالات واتساب هَب النشطة</string>
+    <string name="msg_channel_name">رسائل واتساب هَب الواردة</string>
+    <string name="fgs_notification_title">خدمة واتساب هَب متعددة الحسابات</string>
+    <string name="fgs_notification_body">%1$d من أصل 4 حسابات متصلة</string>
+</resources>

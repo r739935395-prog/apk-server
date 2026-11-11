@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Four colored quadrant nodes representing 4 isolated WhatsApp accounts -->
+    <path
+        android:fillColor="#00C853"
+        android:pathData="M30,30m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+    <path
+        android:fillColor="#2979FF"
+        android:pathData="M78,30m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+    <path
+        android:fillColor="#AA00FF"
+        android:pathData="M30,78m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M78,78m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+    <!-- Central unified hub chat glyph -->
+    <path
+        android:fillColor="#E9EDEF"
+        android:pathData="M54,36C44.06,36 36,43.16 36,52c0,3.82 1.52,7.32 4.05,10.08L37,71l9.5,-3.1C48.86,68.62 51.38,69 54,69c9.94,0 18,-7.16 18,-16S63.94,36 54,36z" />
+</vector>

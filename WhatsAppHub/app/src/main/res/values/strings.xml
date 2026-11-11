@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WhatsApp Hub</string>
+
+    <!-- Navigation -->
+    <string name="nav_inbox">Inbox</string>
+    <string name="nav_accounts">Accounts</string>
+    <string name="nav_contacts">Contacts</string>
+    <string name="nav_groups">Groups</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Inbox -->
+    <string name="inbox_title">WhatsApp Hub</string>
+    <string name="search_placeholder">Search chats, contacts, or messages…</string>
+    <string name="filter_all">All</string>
+    <string name="filter_unread">Unread</string>
+    <string name="filter_groups">Groups</string>
+    <string name="filter_direct">Direct</string>
+    <string name="empty_inbox_title">No conversations yet</string>
+    <string name="empty_inbox_subtitle">Pair up to 4 independent WhatsApp accounts in the Accounts tab to receive and send messages in one unified inbox.</string>
+    <string name="manage_accounts_cta">Manage Accounts</string>
+    <string name="new_chat">New Chat</string>
+
+    <!-- Account states (all 9 required states) -->
+    <string name="state_not_connected">Not connected</string>
+    <string name="state_connecting">Connecting</string>
+    <string name="state_waiting_for_qr">Waiting for QR scan</string>
+    <string name="state_pairing">Pairing</string>
+    <string name="state_connected">Connected</string>
+    <string name="state_reconnecting">Reconnecting</string>
+    <string name="state_disconnected">Disconnected</string>
+    <string name="state_auth_expired">Authentication expired</string>
+    <string name="state_connection_error">Connection error</string>
+
+    <!-- Account management -->
+    <string name="account_slot_format">Account %1$d</string>
+    <string name="btn_connect_qr">Pair / Connect</string>
+    <string name="btn_pair_code">Link with Phone Code</string>
+    <string name="btn_reconnect">Reconnect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_remove">Remove</string>
+    <string name="btn_replace">Replace</string>
+    <string name="qr_instructions">Open official WhatsApp on your phone → Settings → Linked Devices → Link a Device, then scan this QR code.</string>
+    <string name="pair_code_instructions">Enter your phone number with country code (digits only, e.g. 967771234567). Enter the returned 8-character code inside official WhatsApp → Linked Devices → Link with phone number instead.</string>
+    <string name="pair_code_waiting_confirmation">Code generated. Waiting for confirmation on your primary WhatsApp phone…</string>
+
+    <!-- Conversation -->
+    <string name="composer_hint">Message via Account %1$d…</string>
+    <string name="sending_via_account">Sending strictly via Account %1$d (%2$s)</string>
+    <string name="msg_deleted">This message was deleted</string>
+    <string name="typing_indicator">typing…</string>
+    <string name="btn_attach">Attach media</string>
+    <string name="btn_record_voice">Record voice note</string>
+    <string name="btn_stop_send_voice">Stop &amp; send voice note</string>
+    <string name="btn_download_media">Download</string>
+    <string name="btn_open_media">Open</string>
+    <string name="reply_label">Replying to</string>
+
+    <!-- Settings & Security Disclosure -->
+    <string name="settings_language">Language</string>
+    <string name="lang_english">English (LTR)</string>
+    <string name="lang_arabic">العربية (RTL)</string>
+    <string name="settings_theme">Appearance</string>
+    <string name="theme_dark">Dark (Default)</string>
+    <string name="theme_amoled">AMOLED Pure Black</string>
+    <string name="theme_light">Light</string>
+    <string name="settings_notifications">Notifications &amp; Background Service</string>
+    <string name="settings_battery_opt">Configure Battery Optimization (One UI 7)</string>
+    <string name="settings_storage">Storage &amp; Media Cache</string>
+    <string name="btn_clear_media_cache">Clear Downloaded Media Cache</string>
+    <string name="settings_backup">Encrypted Local Backup &amp; Restore</string>
+    <string name="btn_export_backup">Export Encrypted Backup</string>
+    <string name="btn_import_backup">Restore Encrypted Backup</string>
+    <string name="settings_diagnostics">Sanitized Diagnostic Logs</string>
+    <string name="unofficial_warning_title">Unofficial Protocol Notice &amp; Risk Disclosure</string>
+    <string name="unofficial_warning_body">WhatsApp Hub uses whatsmeow, an independent open-source third-party implementation of the WhatsApp Multi-Device Web protocol. It is not affiliated with or endorsed by WhatsApp or Meta. Using unofficial clients may carry compatibility issues, temporary restrictions, or account bans under WhatsApp Terms of Service. No guarantee against account restriction is made. Voice/video calls and broadcast list management are not supported.</string>
+
+    <!-- Foreground Service -->
+    <string name="fgs_channel_name">WhatsApp Hub Active Connections</string>
+    <string name="msg_channel_name">Incoming WhatsApp Hub Messages</string>
+    <string name="fgs_notification_title">WhatsApp Hub Multi-Account Service</string>
+    <string name="fgs_notification_body">%1$d of 4 accounts connected</string>
+</resources>

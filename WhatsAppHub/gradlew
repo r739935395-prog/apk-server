@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -e
+APP_HOME=$(cd "$(dirname "$0")" && pwd)
+if [ -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ]; then
+    exec java -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@"
+elif command -v gradle >/dev/null 2>&1; then
+    exec gradle -p "$APP_HOME" "$@"
+else
+    echo "Error: gradle is not installed and gradle-wrapper.jar is absent. Install Gradle 8.9+ or run gradle wrapper." >&2
+    exit 1
+fi
