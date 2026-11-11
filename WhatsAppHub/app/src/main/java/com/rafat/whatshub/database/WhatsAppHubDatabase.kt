@@ -11,8 +11,6 @@ import com.rafat.whatshub.security.SanitizedLogger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import net.zetetic.database.Logger
-import net.zetetic.database.NoopTarget
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import java.io.File
 
@@ -1302,7 +1300,13 @@ class WhatsAppHubDatabase(
 
         fun createEncrypted(context: Context, keyManager: KeystoreKeyManager): WhatsAppHubDatabase {
             System.loadLibrary("sqlcipher")
-            Logger.setTarget(NoopTarget())
+            runCatching {
+                val loggerCls = Class.forName("net.zetetic.database.Logger")
+                val targetIface = Class.forName("net.zetetic.database.LogTarget")
+                val noopCls = Class.forName("net.zetetic.database.NoopTarget")
+                loggerCls.getMethod("setTarget", targetIface)
+                    .invoke(null, noopCls.getDeclaredConstructor().newInstance())
+            }
             val keyBytes = keyManager.getOrCreateDatabaseKey()
             val factory = SupportOpenHelperFactory(keyBytes)
             return WhatsAppHubDatabase(context.applicationContext, DB_FILE_NAME, factory)

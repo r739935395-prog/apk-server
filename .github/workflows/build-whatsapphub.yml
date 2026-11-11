@@ -96,7 +96,7 @@ jobs:
         working-directory: WhatsAppHub
         run: |
           set -eo pipefail
-          gradle testReleaseUnitTest --stacktrace 2>&1 | tee /tmp/gradle-test.log
+          gradle testReleaseUnitTest 2>&1 | tee /tmp/gradle-test.log
 
       - name: Android App — Generate Release Keystore, Build & Sign Release APK
         working-directory: WhatsAppHub
@@ -120,7 +120,7 @@ jobs:
             WHATSHUB_KEYSTORE_PASSWORD="$STORE_PASS" \
             WHATSHUB_KEY_ALIAS="whatshub" \
             WHATSHUB_KEY_PASSWORD="$STORE_PASS" \
-            gradle assembleRelease --stacktrace
+            gradle assembleRelease
 
             cp app/build/outputs/apk/release/app-release.apk ./app-release.apk
             rm -f "$KEYSTORE_FILE"
@@ -180,9 +180,11 @@ jobs:
               echo "--- NDK ---"
               tail -n 120 /tmp/go-ndk.log 2>/dev/null || true
               echo "--- GRADLE TEST ---"
-              tail -n 160 /tmp/gradle-test.log 2>/dev/null || true
+              grep -E "(^e: |FAILED|FAILURE|What went wrong|^> )" /tmp/gradle-test.log 2>/dev/null || true
+              tail -n 120 /tmp/gradle-test.log 2>/dev/null || true
               echo "--- APK BUILD ---"
-              tail -n 160 /tmp/apk-build.log 2>/dev/null || true
+              grep -E "(^e: |FAILED|FAILURE|What went wrong|^> )" /tmp/apk-build.log 2>/dev/null || true
+              tail -n 120 /tmp/apk-build.log 2>/dev/null || true
             } > WhatsAppHub/docs/ci-failure-log.txt
             git add WhatsAppHub/docs/ci-failure-log.txt WhatsAppHub/whatsapp-engine/go.sum 2>/dev/null || true
             git commit -m "chore(ci): record build diagnostic log [skip ci]" || exit 0
