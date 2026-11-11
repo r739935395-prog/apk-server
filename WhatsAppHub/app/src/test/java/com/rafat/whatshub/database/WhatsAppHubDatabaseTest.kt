@@ -1,5 +1,6 @@
 package com.rafat.whatshub.database
 
+import android.app.Application
 import android.content.Context
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
@@ -11,8 +12,10 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class WhatsAppHubDatabaseTest {
 
     private lateinit var db: WhatsAppHubDatabase

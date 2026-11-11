@@ -1,5 +1,6 @@
 package com.rafat.whatshub.bridge
 
+import android.app.Application
 import android.content.Context
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
@@ -19,6 +20,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 class ControlledEngineGateway : WhatsAppEngineGateway {
     override val isNativeAvailable: Boolean = true
@@ -142,6 +144,7 @@ class ControlledEngineGateway : WhatsAppEngineGateway {
 }
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class FourAccountIntegrationTest {
 
     @get:Rule

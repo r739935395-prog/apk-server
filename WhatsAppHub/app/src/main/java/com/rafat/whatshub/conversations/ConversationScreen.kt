@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
@@ -48,7 +49,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -837,7 +837,7 @@ private fun MessageBubble(
                                             color = bubbleText.copy(alpha = 0.75f)
                                         )
                                     }
-                                    Icon(Icons.Default.OpenInNew, contentDescription = stringResource(R.string.btn_open_media), tint = accountColor)
+                                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = stringResource(R.string.btn_open_media), tint = accountColor)
                                 }
                             } else {
                                 MediaDownloadRow(
