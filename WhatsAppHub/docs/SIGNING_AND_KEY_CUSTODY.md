@@ -35,7 +35,7 @@ Outside the Git repository, the permanent signing key is sealed inside two indep
    - Path: `/home/user/rafat-hub-signing-vault/offline-backup/rafat-hub-signing-offline-backup.tar.enc`
    - Companion Integrity Tag: `/home/user/rafat-hub-signing-vault/offline-backup/rafat-hub-signing-offline-backup.tar.enc.hmac`
    - Encryption: OpenSSL `AES-256-CBC` (`-pbkdf2 -iter 600000`) + independent `HMAC-SHA256`
-   - Offline Archive SHA-256: `4c50f18e51db501344bcf237eb4cd1850645f47dfd10b9b0288e79f651b1789` *(verify exact digest in `CERTIFICATE_PUBLIC_INFO.json`)*
+   - Offline Archive SHA-256: `4c50f18e51db501344bcf237eb4cd1850645f47dfd10b9b0f68a17616999990e`
 3. **Owner Private Credentials File (Strictly Outside Git)**:
    - Path: `/home/user/rafat-hub-signing-vault/OWNER_PRIVATE_CREDENTIALS.txt` (`chmod 600`)
    - **Recommended Owner Action**: Copy the entire `/home/user/rafat-hub-signing-vault/` directory onto TWO separate offline media owned exclusively by you (e.g., an encrypted USB hardware drive and a password manager such as KeePassXC / Bitwarden / 1Password).
