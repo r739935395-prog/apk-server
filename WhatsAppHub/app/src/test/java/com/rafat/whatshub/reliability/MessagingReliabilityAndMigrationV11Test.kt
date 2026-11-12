@@ -12,11 +12,11 @@ import com.rafat.whatshub.bridge.EngineEventEnvelope
 import com.rafat.whatshub.bridge.EngineGroupDto
 import com.rafat.whatshub.bridge.EngineResult
 import com.rafat.whatshub.bridge.EngineSlotSnapshot
+import com.rafat.whatshub.bridge.JniWhatsAppEngineGateway
 import com.rafat.whatshub.bridge.PeekedEventBatch
 import com.rafat.whatshub.bridge.SendMediaPayload
 import com.rafat.whatshub.bridge.SendTextPayload
 import com.rafat.whatshub.bridge.WhatsAppEngineGateway
-import com.rafat.whatshub.bridge.decodeEnvelopeArraySafely
 import com.rafat.whatshub.database.AccountStatus
 import com.rafat.whatshub.database.ContactRecord
 import com.rafat.whatshub.database.IdentityResolver
@@ -752,7 +752,7 @@ class MessagingReliabilityAndMigrationV11Test {
               {"seq":3,"type":"message","account_id":2,"chat_jid":"967772222222@s.whatsapp.net","message_id":"M3","text":"Valid 3"}
             ]
         """.trimIndent()
-        val isolatedBatch = decodeEnvelopeArraySafely(mixedJson)
+        val isolatedBatch = JniWhatsAppEngineGateway().decodeEnvelopeArraySafely(mixedJson)
         assertTrue(isolatedBatch.events.size >= 2)
         assertEquals(3L, isolatedBatch.highestRawSeq)
         assertEquals("Valid 1", isolatedBatch.events.first().text)

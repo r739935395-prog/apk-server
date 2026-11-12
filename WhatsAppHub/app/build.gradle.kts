@@ -126,6 +126,7 @@ dependencies {
     // SQLCipher 4.6.1 (16 KB page-size aligned native libsqlcipher.so) + AndroidX SQLite
     implementation("net.zetetic:sqlcipher-android:4.6.1@aar")
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
+    implementation("androidx.sqlite:sqlite-framework:2.4.0")
 
     // Security & Background Reliability
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
