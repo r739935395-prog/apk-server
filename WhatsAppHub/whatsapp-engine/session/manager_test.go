@@ -195,7 +195,7 @@ func TestLIDToPNMappingReceiptCorrelationAndDeviceSentEcho(t *testing.T) {
 	for _, ev := range evs {
 		if ev.Type == events.EventIdentityMapping {
 			sawMapping = true
-			if ev.LIDJID != "18899900011122@lid" || ev.PNJID != "967771112222@s.whatsapp.net" {
+			if ev.LidJID != "18899900011122@lid" || ev.PnJID != "967771112222@s.whatsapp.net" {
 				t.Fatalf("unexpected mapping event: %+v", ev)
 			}
 		}
