@@ -134,6 +134,27 @@ func Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetAccountsSnapshot(
 	return toJBytes(env, androidbridge.Default().GetAccountsSnapshot())
 }
 
+//export Java_com_rafat_whatshub_bridge_NativeBridge_nativePeekEvents
+func Java_com_rafat_whatshub_bridge_NativeBridge_nativePeekEvents(
+	env *C.JNIEnv,
+	_ C.jclass,
+	maxBatch C.jint,
+) C.jbyteArray {
+	return toJBytes(env, androidbridge.Default().PeekEvents(int(maxBatch)))
+}
+
+//export Java_com_rafat_whatshub_bridge_NativeBridge_nativeAckEvents
+func Java_com_rafat_whatshub_bridge_NativeBridge_nativeAckEvents(
+	env *C.JNIEnv,
+	_ C.jclass,
+	upToSeq C.jlong,
+) C.jbyteArray {
+	if upToSeq <= 0 {
+		return toJBytes(env, `{"ok":true,"acked_count":0}`)
+	}
+	return toJBytes(env, androidbridge.Default().AckEvents(uint64(upToSeq)))
+}
+
 //export Java_com_rafat_whatshub_bridge_NativeBridge_nativePollEvents
 func Java_com_rafat_whatshub_bridge_NativeBridge_nativePollEvents(
 	env *C.JNIEnv,

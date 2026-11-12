@@ -45,8 +45,22 @@ const (
 	EventContactsBatch       EventType = "contacts_batch"
 	EventGroupsBatch         EventType = "groups_batch"
 	EventMediaDownloaded     EventType = "media_downloaded"
+	EventIdentityMapping     EventType = "identity_mapping"
 	EventDiagnosticLog       EventType = "diagnostic_log"
 )
+
+// IsCriticalEvent reports whether an event carries durable user/messaging state
+// that must never be dropped in favor of ephemeral telemetry/typing updates.
+func IsCriticalEvent(t EventType) bool {
+	switch t {
+	case EventMessage, EventReaction, EventMessageRevoked, EventReceipt,
+		EventIdentityMapping, EventAccountState, EventQRCode, EventPairingCode,
+		EventContactsBatch, EventGroupsBatch, EventMediaDownloaded:
+		return true
+	default:
+		return false
+	}
+}
 
 // CompositeChatKey produces the mandatory isolated chat key: "account_id:chat_jid".
 func CompositeChatKey(accountID int, chatJID string) string {
@@ -58,9 +72,11 @@ func CompositeMessageKey(accountID int, chatJID, messageID string) string {
 	return fmt.Sprintf("%d:%s:%s", accountID, chatJID, messageID)
 }
 
-// ContactDTO carries sanitized per-account contact metadata.
+// ContactDTO carries sanitized per-account contact metadata plus optional verified LID/PN links.
 type ContactDTO struct {
 	JID          string `json:"jid"`
+	LidJID       string `json:"lid_jid,omitempty"`
+	PnJID        string `json:"pn_jid,omitempty"`
 	FullName     string `json:"full_name"`
 	FirstName    string `json:"first_name"`
 	PushName     string `json:"push_name"`
@@ -91,7 +107,7 @@ type GroupDTO struct {
 // Envelope is a strongly-typed JSON event emitted from Go to Kotlin.
 // Every event carries AccountID (1..4, or 0 only for engine-level diagnostics).
 type Envelope struct {
-	Seq               uint64       `json:"seq"`
+	Seq              uint64       `json:"seq"`
 	Type             EventType    `json:"type"`
 	AccountID        int          `json:"account_id"`
 	TimestampMs      int64        `json:"timestamp_ms"`
@@ -109,10 +125,19 @@ type Envelope struct {
 	ExpiresInSec     int          `json:"expires_in_sec,omitempty"`
 	PairingCode      string       `json:"pairing_code,omitempty"`
 
+	// Identity resolution fields (scoped strictly to AccountID)
+	RawChatJID       string       `json:"raw_chat_jid,omitempty"`
+	LidJID           string       `json:"lid_jid,omitempty"`
+	PnJID            string       `json:"pn_jid,omitempty"`
+	SenderLidJID     string       `json:"sender_lid_jid,omitempty"`
+	SenderPnJID      string       `json:"sender_pn_jid,omitempty"`
+	MappingSource    string       `json:"mapping_source,omitempty"`
+
 	// Message / media / reply / edit fields
 	ChatJID          string       `json:"chat_jid,omitempty"`
 	ChatName         string       `json:"chat_name,omitempty"`
 	MessageID        string       `json:"message_id,omitempty"`
+	ClientMessageID  string       `json:"client_msg_id,omitempty"`
 	CompositeChatKey string       `json:"composite_chat_key,omitempty"`
 	CompositeMsgKey  string       `json:"composite_msg_key,omitempty"`
 	SenderJID        string       `json:"sender_jid,omitempty"`

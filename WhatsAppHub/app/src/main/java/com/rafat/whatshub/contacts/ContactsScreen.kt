@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -140,6 +139,8 @@ fun ContactsScreen(
                     key = { "${it.accountId}:${it.contactJid}" }
                 ) { contact ->
                     val acctLabel = state.accounts.firstOrNull { it.accountId == contact.accountId }?.label
+                    val cleanName = contact.cleanDisplayName
+                    val verifiedPhone = contact.verifiedPhoneDisplay
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -157,7 +158,7 @@ fun ContactsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             ConversationAvatar(
-                                title = contact.displayName,
+                                title = cleanName,
                                 accountId = contact.accountId,
                                 isGroup = false,
                                 size = 42.dp
@@ -165,14 +166,16 @@ fun ContactsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = contact.displayName,
+                                    text = cleanName,
                                     style = MaterialTheme.typography.titleMedium
                                 )
-                                Text(
-                                    text = "+${contact.contactJid.substringBefore('@')}",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                if (verifiedPhone.isNotBlank() && verifiedPhone != cleanName) {
+                                    Text(
+                                        text = verifiedPhone,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                             AccountBadge(accountId = contact.accountId, label = acctLabel)
                         }

@@ -249,9 +249,13 @@ class FourAccountIntegrationTest {
         repo.onNetworkChanged(true)
         assertEquals(true, engine.networkAvailable)
 
-        // Verify exact message counts per account: 1 incoming + 2 outgoing on (1, 3, 4), and 1 incoming + 1 outgoing on (2)
+        // Verify exact message counts per account:
+        // Accounts 1, 3, 4: 1 incoming + 2 sent outgoing = 3 messages
+        // Account 2: 1 incoming + 1 sent outgoing + 1 failed outgoing (preserved for manual Retry in v1.1.0) = 3 messages
         assertEquals(3, db.getConversationMessages(1, sharedContactJid).size)
-        assertEquals(2, db.getConversationMessages(2, sharedContactJid).size)
+        val acct2Msgs = db.getConversationMessages(2, sharedContactJid)
+        assertEquals(3, acct2Msgs.size)
+        assertEquals(1, acct2Msgs.count { it.status == "failed" && it.textBody == "Should fail while disconnected" })
         assertEquals(3, db.getConversationMessages(3, sharedContactJid).size)
         assertEquals(3, db.getConversationMessages(4, sharedContactJid).size)
     }

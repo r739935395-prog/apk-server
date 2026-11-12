@@ -8,10 +8,12 @@ import com.rafat.whatshub.bridge.SendTextPayload
 import com.rafat.whatshub.bridge.WhatsAppEngineGateway
 import com.rafat.whatshub.database.AccountRecord
 import com.rafat.whatshub.database.AccountStatus
-import com.rafat.whatshub.database.ChatSummaryRecord
+import com.rafat.whatshub.database.AppPreferencesState
 import com.rafat.whatshub.database.ContactRecord
 import com.rafat.whatshub.database.GroupMemberRecord
 import com.rafat.whatshub.database.GroupRecord
+import com.rafat.whatshub.database.IdentityResolver
+import com.rafat.whatshub.database.MessageIdGenerator
 import com.rafat.whatshub.database.MessageMediaRecord
 import com.rafat.whatshub.database.MessageRecord
 import com.rafat.whatshub.database.SessionMetadataRecord
@@ -19,10 +21,12 @@ import com.rafat.whatshub.database.SyncStateRecord
 import com.rafat.whatshub.database.WhatsAppHubDatabase
 import com.rafat.whatshub.security.EncryptedBackupManager
 import com.rafat.whatshub.security.KeystoreKeyManager
+import com.rafat.whatshub.security.PortableRestoreOutcome
 import com.rafat.whatshub.security.SanitizedLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -33,8 +37,14 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Collections
+import java.util.LinkedHashMap
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 data class PairingQrState(
     val accountId: Int,
@@ -54,14 +64,24 @@ data class IncomingMessageAlert(
     val accountId: Int,
     val accountLabel: String,
     val chatJid: String,
+    val messageId: String,
     val chatTitle: String,
     val senderName: String,
     val previewText: String
 )
 
+data class EngineHealthTelemetry(
+    val engineVersion: String,
+    val pollerAlive: Boolean,
+    val processedEventsCount: Long,
+    val isolatedEventErrors: Long,
+    val lastPollTimestampMs: Long
+)
+
 /**
- * Central repository uniting the encrypted SQLite database, Android Keystore per-slot keys,
- * and the Go whatsmeow engine while guaranteeing strict 4-account isolation.
+ * Central repository uniting SQLCipher storage, Android Keystore per-slot keys,
+ * centralized @lid <-> @s.whatsapp.net identity resolution, durable Peek+Ack event ingestion,
+ * and non-cancellable Pending -> Sent -> Delivered -> Read / Failed -> Retry messaging.
  */
 class HubRepository(
     val database: WhatsAppHubDatabase,
@@ -75,6 +95,9 @@ class HubRepository(
     private val _accounts = MutableStateFlow(database.getAccounts())
     val accounts: StateFlow<List<AccountRecord>> = _accounts.asStateFlow()
 
+    private val _appPreferences = MutableStateFlow(loadPreferencesFromDb())
+    val appPreferences: StateFlow<AppPreferencesState> = _appPreferences.asStateFlow()
+
     private val _qrStates = MutableStateFlow<Map<Int, PairingQrState>>(emptyMap())
     val qrStates: StateFlow<Map<Int, PairingQrState>> = _qrStates.asStateFlow()
 
@@ -86,16 +109,53 @@ class HubRepository(
 
     private val _activeConversation = MutableStateFlow<Pair<Int, String>?>(null)
 
+    // Tracks messages that received remote server ACK in this process so a transient local DB error
+    // NEVER triggers a duplicate network transmission on Retry.
+    private val remoteAckedMessageKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    // Bounded LRU set to suppress duplicate OS notifications for already-alerted composite message keys
+    private val alertedNotificationKeys: MutableSet<String> = Collections.synchronizedSet(
+        Collections.newSetFromMap(object : LinkedHashMap<String, Boolean>(256, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean = size > 512
+        })
+    )
+
+    private val pollMutex = Mutex()
     private var pollerJob: Job? = null
+    private val processedEventsCounter = AtomicLong(0L)
+    private val isolatedErrorsCounter = AtomicLong(0L)
+    @Volatile
+    private var lastPollAtMs: Long = 0L
+
     @Volatile
     private var initialized = false
 
     init {
         scope.launch {
-            database.changeVersion.collect {
+            database.accountsInvalidations.collect {
                 _accounts.value = database.getAccounts()
             }
         }
+        scope.launch {
+            database.settingsInvalidations.collect {
+                _appPreferences.value = loadPreferencesFromDb()
+            }
+        }
+    }
+
+    private fun loadPreferencesFromDb(): AppPreferencesState {
+        val acctNotifs = (1..4).associateWith { acct ->
+            database.getSetting("notifications_account_$acct", "true") == "true"
+        }
+        return AppPreferencesState(
+            themeMode = database.getSetting(SETTING_THEME_MODE, "amoled"),
+            languageCode = database.getSetting(SETTING_LANGUAGE, "en"),
+            fontScaleKey = database.getSetting(SETTING_FONT_SCALE, "default"),
+            notificationsEnabled = database.getSetting(SETTING_NOTIFICATIONS_ENABLED, "true") == "true",
+            notificationShowPreview = database.getSetting(SETTING_NOTIFICATION_PREVIEW, "true") == "true",
+            accountNotifications = acctNotifs,
+            debugLogsEnabled = database.getSetting(SETTING_DEBUG_LOGS, "false") == "true"
+        )
     }
 
     @Synchronized
@@ -103,6 +163,15 @@ class HubRepository(
         if (initialized) return
         if (!sessionsRootDir.exists()) sessionsRootDir.mkdirs()
         if (!mediaRootDir.exists()) mediaRootDir.mkdirs()
+
+        // Crash-recovery pass: transition any interrupted un-ACKed pending messages to failed
+        runCatching {
+            val recovered = database.recoverInterruptedPendingMessages()
+            if (recovered > 0) {
+                SanitizedLogger.warn("Repo", "Recovered $recovered interrupted pending outgoing messages after restart")
+            }
+            database.pruneOldJournalEntries()
+        }
 
         val initRes = engine.initEngine(
             sessionsDir = sessionsRootDir.absolutePath,
@@ -114,7 +183,6 @@ class HubRepository(
             return
         }
 
-        // Inject each account's isolated 256-bit AES-GCM key unwrapped from Android Keystore
         for (acct in 1..4) {
             val slotKeyHex = keyManager.getOrCreateAccountSlotKeyHex(acct)
             val keyRes = engine.setSlotKey(acct, slotKeyHex)
@@ -123,7 +191,6 @@ class HubRepository(
             }
         }
 
-        // Sync initial session file presence from Go engine snapshots
         val snapshots = engine.getAccountsSnapshot()
         for (snap in snapshots) {
             if (snap.accountId in 1..4 && snap.hasSavedSession) {
@@ -138,14 +205,13 @@ class HubRepository(
             }
         }
 
-        val debugSetting = database.getSetting(SETTING_DEBUG_LOGS, "false") == "true"
+        val debugSetting = _appPreferences.value.debugLogsEnabled
         SanitizedLogger.debugEnabled = debugSetting
         engine.setDebugLogging(debugSetting)
 
         startEventPoller()
         initialized = true
 
-        // Automatically resume previously paired sessions in isolated coroutines
         scope.launch {
             for (acct in database.getAccounts()) {
                 if (acct.hasSavedSession) {
@@ -155,90 +221,168 @@ class HubRepository(
         }
     }
 
+    /**
+     * Fault-isolated Peek + Persist + Ack event loop.
+     * Never dies on exceptions and never acknowledges Go events until SQLite persistence completes.
+     */
     private fun startEventPoller() {
         pollerJob?.cancel()
         pollerJob = scope.launch {
             while (isActive) {
-                val events = engine.pollEvents(128)
-                if (events.isNotEmpty()) {
-                    processEngineEvents(events)
-                    delay(100L)
-                } else {
-                    delay(400L)
+                var drainedCount = 0
+                var hadTransientStorageError = false
+                try {
+                    pollMutex.withLock {
+                        lastPollAtMs = System.currentTimeMillis()
+                        val peeked = engine.peekEvents(128)
+                        if (peeked.malformedCount > 0) {
+                            isolatedErrorsCounter.addAndGet(peeked.malformedCount.toLong())
+                        }
+                        if (peeked.events.isNotEmpty() || peeked.highestRawSeq > 0L) {
+                            hadTransientStorageError = !processEngineEventsBatchSafely(peeked.events)
+                            if (!hadTransientStorageError && peeked.highestRawSeq > 0L) {
+                                engine.ackEvents(peeked.highestRawSeq)
+                            }
+                            drainedCount = peeked.events.size
+                        }
+                    }
+                } catch (t: Throwable) {
+                    isolatedErrorsCounter.incrementAndGet()
+                    SanitizedLogger.error("Poller", "Recovered poller cycle exception: ${t.javaClass.simpleName}")
+                    hadTransientStorageError = true
+                }
+
+                when {
+                    hadTransientStorageError -> delay(350L)
+                    drainedCount >= 64 -> delay(35L)
+                    drainedCount > 0 -> delay(80L)
+                    else -> delay(260L)
                 }
             }
         }
     }
 
     /**
-     * Publicly callable in integration tests to deterministically drain and process queued engine events.
+     * Deterministic drain entrypoint for integration & messaging tests.
      */
     fun drainAndProcessEventsNow(): Int {
-        val events = engine.pollEvents(512)
-        if (events.isNotEmpty()) {
-            processEngineEvents(events)
+        val peeked = engine.peekEvents(512)
+        if (peeked.events.isNotEmpty() || peeked.highestRawSeq > 0L) {
+            val clean = processEngineEventsBatchSafely(peeked.events)
+            if (clean && peeked.highestRawSeq > 0L) {
+                engine.ackEvents(peeked.highestRawSeq)
+            }
         }
-        return events.size
+        return peeked.events.size
     }
 
-    private fun processEngineEvents(batch: List<EngineEventEnvelope>) {
+    /**
+     * Processes each envelope inside an isolated boundary.
+     * Returns true when the batch is safe to ACK; returns false ONLY if SQLite itself is locked/unavailable
+     * so the unacknowledged batch stays in the Go router for immediate retry.
+     */
+    private fun processEngineEventsBatchSafely(batch: List<EngineEventEnvelope>): Boolean {
         for (ev in batch) {
-            when (ev.type) {
-                "diagnostic_log" -> {
-                    SanitizedLogger.record(
-                        level = ev.logLevel.ifBlank { "INFO" },
-                        module = ev.logModule.ifBlank { "Go" },
-                        message = ev.logMessage,
-                        accountId = ev.accountId,
-                        timestampMs = ev.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis()
-                    )
-                }
+            try {
+                processSingleEngineEvent(ev)
+                processedEventsCounter.incrementAndGet()
+            } catch (sqlLocked: android.database.sqlite.SQLiteDatabaseLockedException) {
+                SanitizedLogger.warn("Poller", "SQLite busy during event seq=${ev.seq}; deferring ACK for retry", ev.accountId)
+                return false
+            } catch (t: Throwable) {
+                // Isolate data/domain error on this single envelope so it cannot poison other events!
+                isolatedErrorsCounter.incrementAndGet()
+                SanitizedLogger.error(
+                    "Poller",
+                    "Isolated error on event type=${ev.type} seq=${ev.seq}: ${t.javaClass.simpleName}",
+                    ev.accountId
+                )
+            }
+        }
+        return true
+    }
 
-                "account_state" -> {
-                    if (ev.accountId !in 1..4) continue
-                    val nextStatus = AccountStatus.fromWire(ev.state)
+    private fun processSingleEngineEvent(ev: EngineEventEnvelope) {
+        // Persist verified LID <-> PN mappings FIRST before handling any chat/message/receipt!
+        if (ev.accountId in 1..4) {
+            if (ev.lidJid.isNotBlank() && ev.pnJid.isNotBlank()) {
+                database.recordIdentityMappingAndMerge(
+                    accountId = ev.accountId,
+                    lidJidRaw = ev.lidJid,
+                    pnJidRaw = ev.pnJid,
+                    source = ev.mappingSource.ifBlank { ev.type }
+                )
+            }
+            if (ev.senderLidJid.isNotBlank() && ev.senderPnJid.isNotBlank()) {
+                database.recordIdentityMappingAndMerge(
+                    accountId = ev.accountId,
+                    lidJidRaw = ev.senderLidJid,
+                    pnJidRaw = ev.senderPnJid,
+                    source = "sender_${ev.type}"
+                )
+            }
+        }
+
+        when (ev.type) {
+            "identity_mapping" -> {
+                // Already handled above via recordIdentityMappingAndMerge
+            }
+
+            "diagnostic_log" -> {
+                SanitizedLogger.record(
+                    level = ev.logLevel.ifBlank { "INFO" },
+                    module = ev.logModule.ifBlank { "Engine" },
+                    message = ev.logMessage,
+                    accountId = ev.accountId,
+                    timestampMs = ev.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis()
+                )
+            }
+
+            "account_state" -> {
+                if (ev.accountId in 1..4) {
+                    val status = AccountStatus.fromWire(ev.state)
                     database.updateAccountState(
                         accountId = ev.accountId,
-                        status = nextStatus,
+                        status = status,
                         jid = ev.jid,
                         phone = ev.phone,
                         pushName = ev.pushName,
                         errorMessage = ev.errorMessage,
-                        reconnectAttempt = ev.reconnectAttempt
+                        reconnectAttempt = ev.reconnectAttempt,
+                        hasSavedSession = if (status == AccountStatus.NOT_CONNECTED) false else null
                     )
-                    if (nextStatus == AccountStatus.CONNECTED) {
+                    if (status == AccountStatus.CONNECTED) {
                         clearPairingArtifacts(ev.accountId)
-                        val now = System.currentTimeMillis()
                         database.upsertSessionMetadata(
                             SessionMetadataRecord(
                                 accountId = ev.accountId,
                                 deviceJid = ev.jid,
                                 keyAlias = "whatshub_account_slot_${ev.accountId}_v1",
-                                pairedAtMs = now,
-                                lastConnectedAtMs = now,
+                                pairedAtMs = System.currentTimeMillis(),
+                                lastConnectedAtMs = System.currentTimeMillis(),
                                 sessionDir = File(sessionsRootDir, "account_${ev.accountId}").absolutePath
                             )
                         )
-                    } else if (nextStatus == AccountStatus.NOT_CONNECTED || nextStatus == AccountStatus.DISCONNECTED || nextStatus == AccountStatus.AUTH_EXPIRED) {
+                    } else if (status == AccountStatus.NOT_CONNECTED || status == AccountStatus.DISCONNECTED) {
                         clearPairingArtifacts(ev.accountId)
                     }
-                    SanitizedLogger.info("Session", "State -> ${nextStatus.wireValue}", ev.accountId)
                 }
+            }
 
-                "qr_code" -> {
-                    if (ev.accountId !in 1..4 || ev.qrCode.isBlank()) continue
+            "qr_code" -> {
+                if (ev.accountId in 1..4 && ev.qrCode.isNotBlank()) {
                     _qrStates.value = _qrStates.value + (
                         ev.accountId to PairingQrState(
                             accountId = ev.accountId,
                             qrPayload = ev.qrCode,
-                            expiresInSec = ev.expiresInSec
+                            expiresInSec = ev.expiresInSec.coerceAtLeast(15)
                         )
                     )
-                    SanitizedLogger.info("Pairing", "Received fresh QR challenge (${ev.expiresInSec}s)", ev.accountId)
                 }
+            }
 
-                "pairing_code" -> {
-                    if (ev.accountId !in 1..4 || ev.pairingCode.isBlank()) continue
+            "pairing_code" -> {
+                if (ev.accountId in 1..4 && ev.pairingCode.isNotBlank()) {
                     _pairingCodes.value = _pairingCodes.value + (
                         ev.accountId to PairingCodeState(
                             accountId = ev.accountId,
@@ -246,194 +390,219 @@ class HubRepository(
                             formattedCode = ev.pairingCode
                         )
                     )
-                    SanitizedLogger.info("Pairing", "Phone pairing code issued; awaiting primary device confirmation", ev.accountId)
                 }
+            }
 
-                "message" -> {
-                    if (ev.accountId !in 1..4 || ev.chatJid.isBlank() || ev.messageId.isBlank()) continue
-                    val targetMsgId = ev.editTargetId.ifBlank { ev.messageId }
-                    val mediaRecord = if (ev.mediaType.isNotBlank()) {
-                        MessageMediaRecord(
-                            accountId = ev.accountId,
-                            chatJid = ev.chatJid,
-                            messageId = targetMsgId,
-                            mediaType = ev.mediaType,
-                            localPath = ev.mediaPath,
-                            mimeType = ev.mimeType,
-                            fileName = ev.fileName,
-                            fileSize = ev.fileSize,
-                            durationSec = ev.durationSec,
-                            isVoiceNote = ev.isVoiceNote,
-                            directPath = ev.directPath,
-                            mediaKeyB64 = ev.mediaKeyB64,
-                            fileSha256B64 = ev.fileSha256B64,
-                            fileEncSha256B64 = ev.fileEncSha256B64,
-                            downloadState = if (ev.mediaPath.isNotBlank()) "ready" else "none",
-                            errorMessage = ""
-                        )
-                    } else null
+            "message" -> {
+                if (ev.accountId in 1..4 && ev.chatJid.isNotBlank() && ev.messageId.isNotBlank()) {
+                    val canonicalChatJid = database.resolveCanonicalChatJid(ev.accountId, ev.chatJid)
+                    if (ev.editTargetId.isNotBlank()) {
+                        database.applyMessageEdit(ev.accountId, canonicalChatJid, ev.editTargetId, ev.text)
+                    } else {
+                        val dedupKey = "msg:${ev.accountId}:$canonicalChatJid:${ev.messageId}"
+                        val active = _activeConversation.value
+                        val isCurrentlyViewing = active?.first == ev.accountId &&
+                            (active.second == canonicalChatJid || active.second == ev.rawChatJid)
 
-                    val activePair = _activeConversation.value
-                    val isCurrentlyOpen = activePair?.first == ev.accountId && activePair.second == ev.chatJid
-
-                    val msgRecord = MessageRecord(
-                        accountId = ev.accountId,
-                        chatJid = ev.chatJid,
-                        messageId = targetMsgId,
-                        compositeKey = "${ev.accountId}:${ev.chatJid}:$targetMsgId",
-                        senderJid = ev.senderJid,
-                        senderName = ev.senderName,
-                        isFromMe = ev.isFromMe,
-                        isGroup = ev.isGroup,
-                        textBody = ev.text,
-                        mediaType = ev.mediaType,
-                        quotedMessageId = ev.quotedMessageId,
-                        quotedSenderJid = ev.quotedSenderJid,
-                        quotedText = ev.quotedText,
-                        reactionsSummary = "",
-                        isDeleted = false,
-                        isEdited = ev.editTargetId.isNotBlank(),
-                        status = ev.status.ifBlank { if (ev.isFromMe) "sent" else "delivered" },
-                        timestampMs = ev.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
-                        media = mediaRecord
-                    )
-
-                    val isNew = database.upsertMessageAndUpdateChat(
-                        record = msgRecord,
-                        chatTitleHint = ev.chatName,
-                        incrementUnread = !ev.isHistorySync && !ev.isFromMe && !isCurrentlyOpen,
-                        explicitUnreadCount = if (ev.isHistorySync && ev.unreadCount > 0) ev.unreadCount else null
-                    )
-
-                    if (isNew && !ev.isHistorySync && !ev.isFromMe && !isCurrentlyOpen && notificationsEnabled()) {
-                        val acctLabel = database.getAccount(ev.accountId)?.label ?: "Account ${ev.accountId}"
-                        val chatTitle = database.getChatSummary(ev.accountId, ev.chatJid)?.title ?: ev.chatJid.substringBefore('@')
-                        val preview = ev.text.ifBlank { "[${ev.mediaType.ifBlank { "Message" }}]" }
-                        _incomingAlerts.tryEmit(
-                            IncomingMessageAlert(
+                        val mediaRec = if (ev.mediaType.isNotBlank()) {
+                            MessageMediaRecord(
                                 accountId = ev.accountId,
-                                accountLabel = acctLabel,
-                                chatJid = ev.chatJid,
-                                chatTitle = chatTitle,
-                                senderName = ev.senderName.ifBlank { chatTitle },
-                                previewText = preview
+                                chatJid = canonicalChatJid,
+                                messageId = ev.messageId,
+                                mediaType = ev.mediaType,
+                                localPath = ev.mediaPath,
+                                mimeType = ev.mimeType,
+                                fileName = ev.fileName,
+                                fileSize = ev.fileSize,
+                                durationSec = ev.durationSec,
+                                isVoiceNote = ev.isVoiceNote,
+                                directPath = ev.directPath,
+                                mediaKeyB64 = ev.mediaKeyB64,
+                                fileSha256B64 = ev.fileSha256B64,
+                                fileEncSha256B64 = ev.fileEncSha256B64,
+                                downloadState = if (ev.mediaPath.isNotBlank()) "ready" else "none",
+                                errorMessage = ""
                             )
-                        )
-                    }
-                }
+                        } else null
 
-                "reaction" -> {
-                    if (ev.accountId in 1..4 && ev.chatJid.isNotBlank() && ev.targetMessageId.isNotBlank()) {
-                        database.applyReaction(ev.accountId, ev.chatJid, ev.targetMessageId, ev.emoji)
-                    }
-                }
-
-                "message_revoked" -> {
-                    if (ev.accountId in 1..4 && ev.chatJid.isNotBlank() && ev.targetMessageId.isNotBlank()) {
-                        database.markMessageRevoked(ev.accountId, ev.chatJid, ev.targetMessageId)
-                    }
-                }
-
-                "receipt" -> {
-                    if (ev.accountId in 1..4 && ev.chatJid.isNotBlank() && ev.messageIds.isNotEmpty()) {
-                        database.updateMessageReceiptStatus(ev.accountId, ev.chatJid, ev.messageIds, ev.receiptStatus)
-                    }
-                }
-
-                "typing" -> {
-                    if (ev.accountId in 1..4 && ev.chatJid.isNotBlank()) {
-                        database.updateChatTyping(ev.accountId, ev.chatJid, ev.isTyping, ev.senderJid)
-                    }
-                }
-
-                "presence" -> {
-                    if (ev.accountId in 1..4 && ev.jid.isNotBlank()) {
-                        database.updatePresence(ev.accountId, ev.jid, ev.isOnline, ev.lastSeenMs)
-                    }
-                }
-
-                "media_downloaded" -> {
-                    if (ev.accountId in 1..4 && ev.chatJid.isNotBlank() && ev.messageId.isNotBlank()) {
-                        val state = if (ev.errorMessage.isBlank() && ev.mediaPath.isNotBlank()) "ready" else "failed"
-                        database.updateMediaDownloadResult(
+                        val msgRec = MessageRecord(
                             accountId = ev.accountId,
-                            chatJid = ev.chatJid,
+                            chatJid = canonicalChatJid,
                             messageId = ev.messageId,
-                            localPath = ev.mediaPath,
-                            downloadState = state,
-                            errorMessage = ev.errorMessage
+                            compositeKey = "${ev.accountId}:$canonicalChatJid:${ev.messageId}",
+                            senderJid = ev.senderJid,
+                            senderName = ev.senderName,
+                            isFromMe = ev.isFromMe,
+                            isGroup = ev.isGroup,
+                            textBody = ev.text,
+                            mediaType = ev.mediaType,
+                            quotedMessageId = ev.quotedMessageId,
+                            quotedSenderJid = ev.quotedSenderJid,
+                            quotedText = ev.quotedText,
+                            reactionsSummary = "",
+                            isDeleted = false,
+                            isEdited = false,
+                            status = ev.status.ifBlank { if (ev.isFromMe) "sent" else "delivered" },
+                            timestampMs = ev.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                            media = mediaRec,
+                            rawChatJid = ev.rawChatJid.ifBlank { ev.chatJid },
+                            clientMessageId = ev.clientMessageId.ifBlank { ev.messageId },
+                            transmissionAck = true
                         )
-                    }
-                }
 
-                "contacts_batch" -> {
-                    if (ev.accountId in 1..4 && ev.contacts.isNotEmpty()) {
-                        database.upsertContacts(
-                            ev.accountId,
-                            ev.contacts.map { dto ->
-                                ContactRecord(
-                                    accountId = ev.accountId,
-                                    contactJid = dto.jid,
-                                    fullName = dto.fullName,
-                                    firstName = dto.firstName,
-                                    pushName = dto.pushName,
-                                    businessName = dto.businessName,
-                                    isOnline = false,
-                                    lastSeenMs = 0L
+                        val insertedNew = database.upsertMessageAndUpdateChat(
+                            record = msgRec,
+                            chatTitleHint = ev.chatName,
+                            incrementUnread = !ev.isHistorySync && !ev.isFromMe && !isCurrentlyViewing,
+                            explicitUnreadCount = if (ev.isHistorySync && ev.unreadCount > 0) ev.unreadCount else null
+                        )
+                        database.recordProcessedJournalKey(dedupKey, ev.accountId, "message")
+
+                        val prefs = _appPreferences.value
+                        val acctNotifEnabled = prefs.accountNotifications[ev.accountId] != false
+                        if (insertedNew && !ev.isHistorySync && !ev.isFromMe && !isCurrentlyViewing &&
+                            prefs.notificationsEnabled && acctNotifEnabled &&
+                            alertedNotificationKeys.add(dedupKey)
+                        ) {
+                            val chatSummary = database.getChatSummary(ev.accountId, canonicalChatJid)
+                            if (chatSummary?.isMuted != true) {
+                                val acctLabel = database.getAccount(ev.accountId)?.label ?: "Account ${ev.accountId}"
+                                val title = chatSummary?.cleanTitle ?: ev.chatName.ifBlank { ev.senderName }
+                                val preview = if (prefs.notificationShowPreview) {
+                                    ev.text.ifBlank { "[${ev.mediaType.ifBlank { "Message" }}]" }
+                                } else {
+                                    "New message"
+                                }
+                                _incomingAlerts.tryEmit(
+                                    IncomingMessageAlert(
+                                        accountId = ev.accountId,
+                                        accountLabel = acctLabel,
+                                        chatJid = canonicalChatJid,
+                                        messageId = ev.messageId,
+                                        chatTitle = title,
+                                        senderName = ev.senderName,
+                                        previewText = preview
+                                    )
                                 )
                             }
-                        )
+                        }
                     }
                 }
+            }
 
-                "groups_batch" -> {
-                    if (ev.accountId in 1..4 && ev.groups.isNotEmpty()) {
-                        val now = System.currentTimeMillis()
-                        database.upsertGroups(
-                            ev.accountId,
-                            ev.groups.map { g ->
-                                GroupRecord(
-                                    accountId = ev.accountId,
-                                    groupJid = g.jid,
-                                    name = g.name,
-                                    topic = g.topic,
-                                    ownerJid = g.ownerJid,
-                                    participantCount = g.participantCount,
-                                    isAnnounce = g.isAnnounce,
-                                    isLocked = g.isLocked,
-                                    createdAtMs = g.createdAtMs,
-                                    updatedAtMs = now,
-                                    members = g.participants.map { p ->
-                                        GroupMemberRecord(
-                                            accountId = ev.accountId,
-                                            groupJid = g.jid,
-                                            memberJid = p.jid,
-                                            phoneJid = p.phoneJid,
-                                            isAdmin = p.isAdmin,
-                                            isSuperAdmin = p.isSuperAdmin
-                                        )
-                                    }
-                                )
-                            }
-                        )
-                    }
+            "reaction" -> {
+                if (ev.accountId in 1..4 && ev.targetMessageId.isNotBlank()) {
+                    database.applyMessageReaction(ev.accountId, ev.chatJid, ev.targetMessageId, ev.emoji)
                 }
+            }
 
-                "history_sync_progress" -> {
-                    if (ev.accountId in 1..4 && ev.syncType.isNotBlank()) {
-                        database.upsertSyncState(
-                            SyncStateRecord(
+            "message_revoked" -> {
+                if (ev.accountId in 1..4 && ev.targetMessageId.isNotBlank()) {
+                    database.markMessageRevoked(ev.accountId, ev.chatJid, ev.targetMessageId)
+                }
+            }
+
+            "receipt" -> {
+                if (ev.accountId in 1..4 && ev.messageIds.isNotEmpty()) {
+                    database.updateMessageReceiptStatus(ev.accountId, ev.chatJid, ev.messageIds, ev.receiptStatus)
+                }
+            }
+
+            "typing" -> {
+                if (ev.accountId in 1..4 && ev.chatJid.isNotBlank()) {
+                    database.updateChatTyping(ev.accountId, ev.chatJid, ev.isTyping, ev.senderJid)
+                }
+            }
+
+            "presence" -> {
+                if (ev.accountId in 1..4 && ev.jid.isNotBlank()) {
+                    database.updatePresence(ev.accountId, ev.jid, ev.isOnline, ev.lastSeenMs)
+                }
+            }
+
+            "media_downloaded" -> {
+                if (ev.accountId in 1..4 && ev.messageId.isNotBlank()) {
+                    val dlState = if (ev.mediaPath.isNotBlank() && ev.errorMessage.isBlank()) "ready" else "failed"
+                    database.updateMediaDownloadState(
+                        accountId = ev.accountId,
+                        chatJidRaw = ev.chatJid,
+                        messageId = ev.messageId,
+                        localPath = ev.mediaPath,
+                        downloadState = dlState,
+                        errorMessage = ev.errorMessage
+                    )
+                }
+            }
+
+            "contacts_batch" -> {
+                if (ev.accountId in 1..4 && ev.contacts.isNotEmpty()) {
+                    database.upsertContacts(
+                        ev.accountId,
+                        ev.contacts.map { c ->
+                            ContactRecord(
                                 accountId = ev.accountId,
-                                syncType = ev.syncType,
-                                lastChunkIndex = ev.chunkIndex,
-                                progressPct = ev.progressPct,
-                                importedChats = ev.importedChats,
-                                importedMessages = ev.importedMessages,
-                                status = ev.status,
-                                updatedAtMs = ev.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis()
+                                contactJid = c.jid,
+                                fullName = c.fullName,
+                                firstName = c.firstName,
+                                pushName = c.pushName,
+                                businessName = c.businessName,
+                                isOnline = false,
+                                lastSeenMs = 0L,
+                                lidJid = c.lidJid,
+                                pnJid = c.pnJid
                             )
+                        }
+                    )
+                }
+            }
+
+            "groups_batch" -> {
+                if (ev.accountId in 1..4 && ev.groups.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    database.upsertGroups(
+                        ev.accountId,
+                        ev.groups.map { g ->
+                            GroupRecord(
+                                accountId = ev.accountId,
+                                groupJid = g.jid,
+                                name = g.name,
+                                topic = g.topic,
+                                ownerJid = g.ownerJid,
+                                participantCount = g.participantCount,
+                                isAnnounce = g.isAnnounce,
+                                isLocked = g.isLocked,
+                                createdAtMs = g.createdAtMs,
+                                updatedAtMs = now,
+                                members = g.participants.map { p ->
+                                    GroupMemberRecord(
+                                        accountId = ev.accountId,
+                                        groupJid = g.jid,
+                                        memberJid = p.jid,
+                                        phoneJid = p.phoneJid,
+                                        isAdmin = p.isAdmin,
+                                        isSuperAdmin = p.isSuperAdmin
+                                    )
+                                }
+                            )
+                        }
+                    )
+                }
+            }
+
+            "history_sync_progress" -> {
+                if (ev.accountId in 1..4 && ev.syncType.isNotBlank()) {
+                    database.upsertSyncState(
+                        SyncStateRecord(
+                            accountId = ev.accountId,
+                            syncType = ev.syncType,
+                            lastChunkIndex = ev.chunkIndex,
+                            progressPct = ev.progressPct,
+                            importedChats = ev.importedChats,
+                            importedMessages = ev.importedMessages,
+                            status = ev.status,
+                            updatedAtMs = ev.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis()
                         )
-                    }
+                    )
                 }
             }
         }
@@ -444,7 +613,9 @@ class HubRepository(
         _pairingCodes.value = _pairingCodes.value - accountId
     }
 
-    // --- Account Lifecycle Actions ---
+    // =========================================================================
+    // ACCOUNT LIFECYCLE ACTIONS
+    // =========================================================================
 
     suspend fun connectAccount(accountId: Int): EngineResult = withContext(Dispatchers.IO) {
         require(accountId in 1..4) { "Invalid accountId $accountId" }
@@ -468,7 +639,6 @@ class HubRepository(
             _pairingCodes.value = _pairingCodes.value + (
                 accountId to PairingCodeState(accountId = accountId, phone = phone, formattedCode = res.pairingCode)
             )
-            // Crucial: requesting a pairing code transitions state ONLY to PAIRING, never CONNECTED.
             database.updateAccountState(accountId, AccountStatus.PAIRING, phone = phone, hasSavedSession = false)
         } else if (!res.ok) {
             database.updateAccountState(accountId, AccountStatus.CONNECTION_ERROR, errorMessage = res.error)
@@ -503,11 +673,13 @@ class HubRepository(
         database.updateAccountLabel(accountId, newLabel)
     }
 
-    // --- Strictly Account-Scoped Messaging Actions ---
+    // =========================================================================
+    // RELIABLE OUTGOING MESSAGING PIPELINE (PENDING -> SENT -> DELIVERED -> READ / FAILED -> RETRY)
+    // =========================================================================
 
     fun setActiveConversation(accountId: Int?, chatJid: String?) {
         _activeConversation.value = if (accountId != null && !chatJid.isNullOrBlank()) {
-            accountId to chatJid
+            accountId to database.resolveCanonicalChatJid(accountId, chatJid)
         } else {
             null
         }
@@ -515,65 +687,110 @@ class HubRepository(
 
     suspend fun openAndMarkConversationRead(accountId: Int, chatJid: String) = withContext(Dispatchers.IO) {
         require(accountId in 1..4) { "Invalid accountId $accountId" }
-        val unreadItems = database.clearChatUnread(accountId, chatJid)
+        val canonical = database.resolveCanonicalChatJid(accountId, chatJid)
+        val unreadItems = database.clearChatUnread(accountId, canonical)
         if (unreadItems.isNotEmpty()) {
             val groupedBySender = unreadItems.groupBy({ it.second }, { it.first })
             for ((senderJid, msgIds) in groupedBySender) {
-                engine.markRead(accountId, chatJid, senderJid, msgIds)
+                engine.markRead(accountId, canonical, senderJid, msgIds)
             }
         }
     }
 
+    /**
+     * Durable outgoing text pipeline:
+     *  1. Persists a local 'pending' record to SQLite FIRST (invoking [onPendingPersisted] only after DB commit).
+     *  2. Transmits on NonCancellable IO context so navigating Back NEVER drops post-send reconciliation.
+     *  3. Reconciles server ACK idempotently (never re-transmitting if only local DB lagged).
+     *  4. Transitions to 'failed' with clear reason if transmission failed, enabling safe manual Retry.
+     */
     suspend fun sendTextMessage(
         accountId: Int,
         chatJid: String,
         text: String,
         quotedMessageId: String = "",
         quotedSenderJid: String = "",
-        quotedText: String = ""
-    ): EngineResult = withContext(Dispatchers.IO) {
+        quotedText: String = "",
+        onPendingPersisted: ((String) -> Unit)? = null
+    ): EngineResult = withContext(scope.coroutineContext + NonCancellable) {
         require(accountId in 1..4) { "Invalid accountId $accountId" }
         val cleanText = text.trim()
         if (cleanText.isEmpty()) return@withContext EngineResult(ok = false, error = "Message cannot be empty")
 
-        val normalizedJid = if (chatJid.contains('@')) chatJid else "${chatJid.trimStart('+')}@s.whatsapp.net"
-        val res = engine.sendText(
-            accountId = accountId,
-            payload = SendTextPayload(
-                chatJid = normalizedJid,
-                text = cleanText,
+        val canonicalChatJid = database.resolveCanonicalChatJid(accountId, IdentityResolver.normalizeJid(chatJid))
+        if (canonicalChatJid.isBlank()) {
+            return@withContext EngineResult(ok = false, error = "Invalid recipient JID")
+        }
+
+        val acct = database.getAccount(accountId)
+        val ownJid = acct?.jid.orEmpty()
+        val clientMsgId = MessageIdGenerator.nextWhatsAppMessageId(acct?.phone.orEmpty())
+        val nowMs = System.currentTimeMillis()
+
+        // Step 1: Persist Pending record BEFORE clearing composer or calling JNI
+        database.upsertMessageAndUpdateChat(
+            record = MessageRecord(
+                accountId = accountId,
+                chatJid = canonicalChatJid,
+                messageId = clientMsgId,
+                compositeKey = "$accountId:$canonicalChatJid:$clientMsgId",
+                senderJid = ownJid,
+                senderName = "Me",
+                isFromMe = true,
+                isGroup = IdentityResolver.isGroupJid(canonicalChatJid),
+                textBody = cleanText,
+                mediaType = "",
                 quotedMessageId = quotedMessageId,
                 quotedSenderJid = quotedSenderJid,
-                quotedText = quotedText
-            )
+                quotedText = quotedText,
+                reactionsSummary = "",
+                isDeleted = false,
+                isEdited = false,
+                status = "pending",
+                timestampMs = nowMs,
+                rawChatJid = chatJid,
+                clientMessageId = clientMsgId,
+                transmissionAck = false,
+                errorReason = ""
+            ),
+            incrementUnread = false
         )
-        if (res.ok && res.messageId.isNotBlank()) {
-            val ownJid = database.getAccount(accountId)?.jid ?: ""
-            database.upsertMessageAndUpdateChat(
-                record = MessageRecord(
-                    accountId = accountId,
-                    chatJid = normalizedJid,
-                    messageId = res.messageId,
-                    compositeKey = "$accountId:$normalizedJid:${res.messageId}",
-                    senderJid = ownJid,
-                    senderName = "Me",
-                    isFromMe = true,
-                    isGroup = normalizedJid.endsWith("@g.us"),
-                    textBody = cleanText,
-                    mediaType = "",
+        onPendingPersisted?.invoke(clientMsgId)
+
+        // Step 2: Transmit via Go whatsmeow engine with deterministic clientMsgId
+        val res = runCatching {
+            engine.sendText(
+                accountId = accountId,
+                payload = SendTextPayload(
+                    chatJid = canonicalChatJid,
+                    clientMessageId = clientMsgId,
+                    text = cleanText,
                     quotedMessageId = quotedMessageId,
                     quotedSenderJid = quotedSenderJid,
-                    quotedText = quotedText,
-                    reactionsSummary = "",
-                    isDeleted = false,
-                    isEdited = false,
-                    status = "sent",
-                    timestampMs = res.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis()
-                ),
-                incrementUnread = false
+                    quotedText = quotedText
+                )
             )
+        }.getOrElse { err ->
+            EngineResult(ok = false, error = err.message ?: "Engine transmission exception")
         }
-        res
+
+        // Step 3: Reconcile server ACK vs transmission failure
+        if (res.ok) {
+            val ackKey = "$accountId:$clientMsgId"
+            remoteAckedMessageKeys.add(ackKey)
+            reconcileSentWithLocalRetry(
+                accountId = accountId,
+                chatJid = canonicalChatJid,
+                clientMsgId = clientMsgId,
+                serverMsgId = res.messageId.ifBlank { clientMsgId },
+                serverTsMs = res.timestampMs.takeIf { it > 0 } ?: nowMs
+            )
+            res.copy(messageId = res.messageId.ifBlank { clientMsgId })
+        } else {
+            val errReason = res.error.ifBlank { "Delivery failed on Account $accountId" }
+            database.markOutgoingMessageFailed(accountId, canonicalChatJid, clientMsgId, errReason)
+            res
+        }
     }
 
     suspend fun sendMediaMessage(
@@ -586,72 +803,231 @@ class HubRepository(
         durationSec: Int = 0,
         quotedMessageId: String = "",
         quotedSenderJid: String = "",
-        quotedText: String = ""
-    ): EngineResult = withContext(Dispatchers.IO) {
+        quotedText: String = "",
+        onPendingPersisted: ((String) -> Unit)? = null
+    ): EngineResult = withContext(scope.coroutineContext + NonCancellable) {
         require(accountId in 1..4) { "Invalid accountId $accountId" }
-        val normalizedJid = if (chatJid.contains('@')) chatJid else "${chatJid.trimStart('+')}@s.whatsapp.net"
-        val res = engine.sendMedia(
+        if (!localFile.exists() || localFile.length() == 0L) {
+            return@withContext EngineResult(ok = false, error = "Selected media file is empty or inaccessible")
+        }
+
+        val canonicalChatJid = database.resolveCanonicalChatJid(accountId, IdentityResolver.normalizeJid(chatJid))
+        val acct = database.getAccount(accountId)
+        val ownJid = acct?.jid.orEmpty()
+        val clientMsgId = MessageIdGenerator.nextWhatsAppMessageId(acct?.phone.orEmpty())
+        val nowMs = System.currentTimeMillis()
+        val isVoice = mediaType == "voice"
+
+        val mediaRec = MessageMediaRecord(
             accountId = accountId,
-            payload = SendMediaPayload(
-                chatJid = normalizedJid,
+            chatJid = canonicalChatJid,
+            messageId = clientMsgId,
+            mediaType = mediaType,
+            localPath = localFile.absolutePath,
+            mimeType = mimeType,
+            fileName = localFile.name,
+            fileSize = localFile.length(),
+            durationSec = durationSec,
+            isVoiceNote = isVoice,
+            directPath = "",
+            mediaKeyB64 = "",
+            fileSha256B64 = "",
+            fileEncSha256B64 = "",
+            downloadState = "ready",
+            errorMessage = ""
+        )
+
+        // Step 1: Persist Pending media message BEFORE network upload
+        database.upsertMessageAndUpdateChat(
+            record = MessageRecord(
+                accountId = accountId,
+                chatJid = canonicalChatJid,
+                messageId = clientMsgId,
+                compositeKey = "$accountId:$canonicalChatJid:$clientMsgId",
+                senderJid = ownJid,
+                senderName = "Me",
+                isFromMe = true,
+                isGroup = IdentityResolver.isGroupJid(canonicalChatJid),
+                textBody = caption,
                 mediaType = mediaType,
-                filePath = localFile.absolutePath,
-                mimeType = mimeType,
-                caption = caption,
-                fileName = localFile.name,
-                durationSec = durationSec,
                 quotedMessageId = quotedMessageId,
                 quotedSenderJid = quotedSenderJid,
-                quotedText = quotedText
-            )
+                quotedText = quotedText,
+                reactionsSummary = "",
+                isDeleted = false,
+                isEdited = false,
+                status = "pending",
+                timestampMs = nowMs,
+                media = mediaRec,
+                rawChatJid = chatJid,
+                clientMessageId = clientMsgId,
+                transmissionAck = false
+            ),
+            incrementUnread = false
         )
-        if (res.ok && res.messageId.isNotBlank()) {
-            val ownJid = database.getAccount(accountId)?.jid ?: ""
-            val isVoice = mediaType == "voice"
-            val mediaRec = MessageMediaRecord(
+        onPendingPersisted?.invoke(clientMsgId)
+
+        // Step 2: Upload & transmit on NonCancellable IO context
+        val res = runCatching {
+            engine.sendMedia(
                 accountId = accountId,
-                chatJid = normalizedJid,
-                messageId = res.messageId,
-                mediaType = mediaType,
-                localPath = localFile.absolutePath,
-                mimeType = mimeType,
-                fileName = localFile.name,
-                fileSize = localFile.length(),
-                durationSec = durationSec,
-                isVoiceNote = isVoice,
-                directPath = "",
-                mediaKeyB64 = "",
-                fileSha256B64 = "",
-                fileEncSha256B64 = "",
-                downloadState = "ready",
-                errorMessage = ""
-            )
-            database.upsertMessageAndUpdateChat(
-                record = MessageRecord(
-                    accountId = accountId,
-                    chatJid = normalizedJid,
-                    messageId = res.messageId,
-                    compositeKey = "$accountId:$normalizedJid:${res.messageId}",
-                    senderJid = ownJid,
-                    senderName = "Me",
-                    isFromMe = true,
-                    isGroup = normalizedJid.endsWith("@g.us"),
-                    textBody = caption,
+                payload = SendMediaPayload(
+                    chatJid = canonicalChatJid,
+                    clientMessageId = clientMsgId,
                     mediaType = mediaType,
+                    filePath = localFile.absolutePath,
+                    mimeType = mimeType,
+                    caption = caption,
+                    fileName = localFile.name,
+                    durationSec = durationSec,
                     quotedMessageId = quotedMessageId,
                     quotedSenderJid = quotedSenderJid,
-                    quotedText = quotedText,
-                    reactionsSummary = "",
-                    isDeleted = false,
-                    isEdited = false,
-                    status = "sent",
-                    timestampMs = res.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
-                    media = mediaRec
-                ),
-                incrementUnread = false
+                    quotedText = quotedText
+                )
             )
+        }.getOrElse { err ->
+            EngineResult(ok = false, error = err.message ?: "Media upload failed")
         }
-        res
+
+        if (res.ok) {
+            remoteAckedMessageKeys.add("$accountId:$clientMsgId")
+            reconcileSentWithLocalRetry(
+                accountId = accountId,
+                chatJid = canonicalChatJid,
+                clientMsgId = clientMsgId,
+                serverMsgId = res.messageId.ifBlank { clientMsgId },
+                serverTsMs = res.timestampMs.takeIf { it > 0 } ?: nowMs
+            )
+            res.copy(messageId = res.messageId.ifBlank { clientMsgId })
+        } else {
+            val errReason = res.error.ifBlank { "Media upload failed on Account $accountId" }
+            database.markOutgoingMessageFailed(accountId, canonicalChatJid, clientMsgId, errReason)
+            res
+        }
+    }
+
+    /**
+     * Retries a failed outgoing message WITHOUT creating a duplicate local row and WITHOUT
+     * re-transmitting if remote server ACK was already received in memory or DB.
+     */
+    suspend fun retryFailedMessage(accountId: Int, chatJid: String, messageId: String): EngineResult =
+        withContext(scope.coroutineContext + NonCancellable) {
+            require(accountId in 1..4) { "Invalid accountId $accountId" }
+            val canonicalChatJid = database.resolveCanonicalChatJid(accountId, chatJid)
+            val existing = database.getMessageById(accountId, canonicalChatJid, messageId)
+                ?: return@withContext EngineResult(ok = false, error = "Message no longer exists")
+
+            if (existing.transmissionAck || remoteAckedMessageKeys.contains("$accountId:$messageId")) {
+                // Remote transmission already succeeded earlier; reconcile local status ONLY!
+                database.markOutgoingMessageSent(accountId, canonicalChatJid, messageId, messageId, existing.timestampMs)
+                return@withContext EngineResult(ok = true, messageId = messageId, timestampMs = existing.timestampMs)
+            }
+
+            val pendingMsg = database.resetFailedMessageToPending(accountId, canonicalChatJid, messageId)
+                ?: existing
+
+            val res = if (pendingMsg.mediaType.isNotBlank() && pendingMsg.media != null) {
+                val localFile = File(pendingMsg.media.localPath)
+                if (!localFile.exists()) {
+                    database.markOutgoingMessageFailed(accountId, canonicalChatJid, messageId, "Local attachment file missing")
+                    return@withContext EngineResult(ok = false, error = "Local attachment file missing")
+                }
+                engine.sendMedia(
+                    accountId = accountId,
+                    payload = SendMediaPayload(
+                        chatJid = canonicalChatJid,
+                        clientMessageId = messageId,
+                        mediaType = pendingMsg.mediaType,
+                        filePath = localFile.absolutePath,
+                        mimeType = pendingMsg.media.mimeType,
+                        caption = pendingMsg.textBody,
+                        fileName = pendingMsg.media.fileName,
+                        durationSec = pendingMsg.media.durationSec,
+                        quotedMessageId = pendingMsg.quotedMessageId,
+                        quotedSenderJid = pendingMsg.quotedSenderJid,
+                        quotedText = pendingMsg.quotedText
+                    )
+                )
+            } else {
+                engine.sendText(
+                    accountId = accountId,
+                    payload = SendTextPayload(
+                        chatJid = canonicalChatJid,
+                        clientMessageId = messageId,
+                        text = pendingMsg.textBody,
+                        quotedMessageId = pendingMsg.quotedMessageId,
+                        quotedSenderJid = pendingMsg.quotedSenderJid,
+                        quotedText = pendingMsg.quotedText
+                    )
+                )
+            }
+
+            if (res.ok) {
+                remoteAckedMessageKeys.add("$accountId:$messageId")
+                reconcileSentWithLocalRetry(
+                    accountId = accountId,
+                    chatJid = canonicalChatJid,
+                    clientMsgId = messageId,
+                    serverMsgId = res.messageId.ifBlank { messageId },
+                    serverTsMs = res.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis()
+                )
+            } else {
+                database.markOutgoingMessageFailed(
+                    accountId = accountId,
+                    chatJidRaw = canonicalChatJid,
+                    messageId = messageId,
+                    reason = res.error.ifBlank { "Retry failed — verify Account $accountId is connected" }
+                )
+            }
+            res
+        }
+
+    private suspend fun reconcileSentWithLocalRetry(
+        accountId: Int,
+        chatJid: String,
+        clientMsgId: String,
+        serverMsgId: String,
+        serverTsMs: Long
+    ) {
+        var attempt = 0
+        while (attempt < 3) {
+            val ok = runCatching {
+                database.markOutgoingMessageSent(accountId, chatJid, clientMsgId, serverMsgId, serverTsMs)
+            }.isSuccess
+            if (ok) return
+            attempt++
+            delay(120L * attempt)
+        }
+        SanitizedLogger.error("Repo", "Local DB reconciliation deferred after remote ACK for msg=$clientMsgId", accountId)
+    }
+
+    suspend fun forwardMessage(
+        sourceMsg: MessageRecord,
+        targetAccountId: Int,
+        targetChatJid: String
+    ): EngineResult {
+        require(targetAccountId in 1..4) { "Invalid targetAccountId" }
+        val media = sourceMsg.media
+        if (sourceMsg.mediaType.isNotBlank() && media != null && media.localPath.isNotBlank()) {
+            val file = File(media.localPath)
+            if (file.exists() && file.length() > 0L) {
+                return sendMediaMessage(
+                    accountId = targetAccountId,
+                    chatJid = targetChatJid,
+                    mediaType = sourceMsg.mediaType,
+                    localFile = file,
+                    mimeType = media.mimeType,
+                    caption = sourceMsg.textBody,
+                    durationSec = media.durationSec
+                )
+            }
+        }
+        val body = sourceMsg.textBody.ifBlank { "[Forwarded ${sourceMsg.mediaType.ifBlank { "message" }}]" }
+        return sendTextMessage(
+            accountId = targetAccountId,
+            chatJid = targetChatJid,
+            text = body
+        )
     }
 
     suspend fun sendReaction(
@@ -662,9 +1038,10 @@ class HubRepository(
         emoji: String
     ): EngineResult = withContext(Dispatchers.IO) {
         require(accountId in 1..4) { "Invalid accountId $accountId" }
-        val res = engine.sendReaction(accountId, chatJid, senderJid, targetMessageId, emoji)
+        val canonical = database.resolveCanonicalChatJid(accountId, chatJid)
+        val res = engine.sendReaction(accountId, canonical, senderJid, targetMessageId, emoji)
         if (res.ok) {
-            database.applyReaction(accountId, chatJid, targetMessageId, emoji)
+            database.applyMessageReaction(accountId, canonical, targetMessageId, emoji)
         }
         res
     }
@@ -676,17 +1053,22 @@ class HubRepository(
         targetMessageId: String
     ): EngineResult = withContext(Dispatchers.IO) {
         require(accountId in 1..4) { "Invalid accountId $accountId" }
-        val res = engine.revokeMessage(accountId, chatJid, senderJid, targetMessageId)
+        val canonical = database.resolveCanonicalChatJid(accountId, chatJid)
+        val res = engine.revokeMessage(accountId, canonical, senderJid, targetMessageId)
         if (res.ok) {
-            database.markMessageRevoked(accountId, chatJid, targetMessageId)
+            database.markMessageRevoked(accountId, canonical, targetMessageId)
         }
         res
+    }
+
+    fun deleteMessageForMe(accountId: Int, chatJid: String, messageId: String) {
+        database.deleteMessageLocally(accountId, chatJid, messageId)
     }
 
     suspend fun downloadMessageMedia(accountId: Int, msg: MessageRecord): EngineResult = withContext(Dispatchers.IO) {
         require(accountId in 1..4 && msg.accountId == accountId) { "Account mismatch on media download" }
         val media = msg.media ?: return@withContext EngineResult(ok = false, error = "No media metadata on message")
-        database.updateMediaDownloadResult(accountId, msg.chatJid, msg.messageId, "", "downloading")
+        database.updateMediaDownloadState(accountId, msg.chatJid, msg.messageId, "", "downloading")
 
         val res = engine.downloadMedia(
             accountId = accountId,
@@ -702,9 +1084,9 @@ class HubRepository(
             )
         )
         if (res.ok && res.mediaPath.isNotBlank()) {
-            database.updateMediaDownloadResult(accountId, msg.chatJid, msg.messageId, res.mediaPath, "ready")
+            database.updateMediaDownloadState(accountId, msg.chatJid, msg.messageId, res.mediaPath, "ready")
         } else {
-            database.updateMediaDownloadResult(accountId, msg.chatJid, msg.messageId, "", "failed", res.error)
+            database.updateMediaDownloadState(accountId, msg.chatJid, msg.messageId, "", "failed", res.error)
         }
         res
     }
@@ -712,7 +1094,8 @@ class HubRepository(
     suspend fun sendTypingState(accountId: Int, chatJid: String, isTyping: Boolean, isAudio: Boolean = false) =
         withContext(Dispatchers.IO) {
             if (accountId in 1..4) {
-                engine.sendTyping(accountId, chatJid, isTyping, isAudio)
+                val canonical = database.resolveCanonicalChatJid(accountId, chatJid)
+                engine.sendTyping(accountId, canonical, isTyping, isAudio)
             }
         }
 
@@ -731,7 +1114,9 @@ class HubRepository(
                         pushName = it.pushName,
                         businessName = it.businessName,
                         isOnline = false,
-                        lastSeenMs = 0L
+                        lastSeenMs = 0L,
+                        lidJid = it.lidJid,
+                        pnJid = it.pnJid
                     )
                 }
             )
@@ -800,41 +1185,53 @@ class HubRepository(
 
     fun startNewConversation(accountId: Int, rawPhoneOrJid: String, displayName: String = ""): String {
         require(accountId in 1..4) { "Invalid accountId $accountId" }
-        val cleaned = rawPhoneOrJid.trim()
-        val jid = if (cleaned.contains('@')) cleaned else "${cleaned.replace(Regex("[^0-9]"), "")}@s.whatsapp.net"
-        database.ensureChatExists(accountId, jid, displayName)
-        return jid
+        val normalized = IdentityResolver.normalizeJid(rawPhoneOrJid)
+        require(normalized.isNotBlank()) { "Enter a valid phone number with country code" }
+        return database.ensureChatExists(accountId, normalized, displayName)
     }
 
     fun onNetworkChanged(available: Boolean) {
         engine.onNetworkChanged(available)
     }
 
-    // --- Settings, Storage & Encrypted Backup ---
+    // =========================================================================
+    // SETTINGS, TELEMETRY, STORAGE & PORTABLE ENCRYPTED BACKUP/MIGRATION
+    // =========================================================================
 
-    fun notificationsEnabled(): Boolean =
-        database.getSetting(SETTING_NOTIFICATIONS_ENABLED, "true") == "true"
+    fun notificationsEnabled(): Boolean = _appPreferences.value.notificationsEnabled
 
     fun setNotificationsEnabled(enabled: Boolean) {
         database.setSetting(SETTING_NOTIFICATIONS_ENABLED, enabled.toString())
     }
 
-    fun getThemeMode(): String =
-        database.getSetting(SETTING_THEME_MODE, "dark")
+    fun setNotificationPreviewEnabled(enabled: Boolean) {
+        database.setSetting(SETTING_NOTIFICATION_PREVIEW, enabled.toString())
+    }
+
+    fun setAccountNotificationEnabled(accountId: Int, enabled: Boolean) {
+        require(accountId in 1..4)
+        database.setSetting("notifications_account_$accountId", enabled.toString())
+    }
+
+    fun getThemeMode(): String = _appPreferences.value.themeMode
 
     fun setThemeMode(mode: String) {
         database.setSetting(SETTING_THEME_MODE, mode)
     }
 
-    fun getLanguageCode(): String =
-        database.getSetting(SETTING_LANGUAGE, "en")
+    fun getLanguageCode(): String = _appPreferences.value.languageCode
 
     fun setLanguageCode(lang: String) {
         database.setSetting(SETTING_LANGUAGE, lang)
     }
 
-    fun isDebugLoggingEnabled(): Boolean =
-        database.getSetting(SETTING_DEBUG_LOGS, "false") == "true"
+    fun getFontScaleKey(): String = _appPreferences.value.fontScaleKey
+
+    fun setFontScaleKey(scaleKey: String) {
+        database.setSetting(SETTING_FONT_SCALE, scaleKey)
+    }
+
+    fun isDebugLoggingEnabled(): Boolean = _appPreferences.value.debugLogsEnabled
 
     fun setDebugLoggingEnabled(enabled: Boolean) {
         database.setSetting(SETTING_DEBUG_LOGS, enabled.toString())
@@ -842,8 +1239,17 @@ class HubRepository(
         engine.setDebugLogging(enabled)
     }
 
+    fun getEngineHealthTelemetry(): EngineHealthTelemetry = EngineHealthTelemetry(
+        engineVersion = engine.engineVersion(),
+        pollerAlive = pollerJob?.isActive == true,
+        processedEventsCount = processedEventsCounter.get(),
+        isolatedEventErrors = isolatedErrorsCounter.get(),
+        lastPollTimestampMs = lastPollAtMs
+    )
+
     suspend fun calculateMediaStorageBytes(): Long = withContext(Dispatchers.IO) {
-        mediaRootDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        if (!mediaRootDir.exists()) 0L
+        else mediaRootDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
     suspend fun clearMediaCache(): Long = withContext(Dispatchers.IO) {
@@ -854,21 +1260,37 @@ class HubRepository(
     }
 
     /**
-     * Exports an AES-256-GCM encrypted backup archive containing ONLY the already-SQLCipher-encrypted
-     * metadata database file (never raw Keystore keys or unencrypted session tokens).
+     * Exports a portable v1.1.0+ (WHUBBK02) AES-256-GCM encrypted backup snapshot containing
+     * accounts metadata, LID/PN mappings, contacts, groups, chats, messages, and settings
+     * (never raw Signal/Noise authentication keys).
      */
-    suspend fun exportEncryptedBackup(dbFile: File, passphrase: String): ByteArray = withContext(Dispatchers.IO) {
+    suspend fun exportPortableEncryptedBackup(passphrase: String): ByteArray = withContext(Dispatchers.IO) {
         database.checkpointForBackup()
-        val files = buildMap {
-            if (dbFile.exists()) put("metadata/${dbFile.name}", dbFile)
-        }
-        EncryptedBackupManager.createEncryptedBackup(files, passphrase)
+        val snapshot = database.exportPortableSnapshot()
+        EncryptedBackupManager.createPortableEncryptedSnapshot(snapshot, passphrase)
     }
 
-    suspend fun verifyAndExtractEncryptedBackup(archiveBytes: ByteArray, passphrase: String, stagingDir: File): List<String> =
+    suspend fun restorePortableEncryptedBackup(archiveBytes: ByteArray, passphrase: String): PortableRestoreOutcome =
         withContext(Dispatchers.IO) {
-            EncryptedBackupManager.restoreEncryptedBackup(archiveBytes, passphrase, stagingDir)
+            EncryptedBackupManager.restorePortableOrLegacyBackup(archiveBytes, passphrase, database)
         }
+
+    fun exportSanitizedLogsText(): String {
+        val telemetry = getEngineHealthTelemetry()
+        val acctSummary = database.getAccounts().joinToString(" | ") {
+            "Slot#${it.accountId}:${it.status.wireValue}"
+        }
+        val header = buildString {
+            appendLine("=== Rafat WhatsApp Hub v1.1.0 Sanitized Diagnostics ===")
+            appendLine("Engine: ${telemetry.engineVersion}")
+            appendLine("Poller Alive: ${telemetry.pollerAlive} | Events Processed: ${telemetry.processedEventsCount} | Isolated Errors: ${telemetry.isolatedEventErrors}")
+            appendLine("Accounts: $acctSummary")
+            appendLine("Note: Message contents, session keys, QR codes, and full phone numbers are strictly redacted.")
+            appendLine("-------------------------------------------------------")
+        }
+        val lines = SanitizedLogger.entries.value.joinToString("\n") { it.formattedLine() }
+        return header + (lines.ifBlank { "(No diagnostic entries recorded)" }) + "\n"
+    }
 
     fun getEngineVersion(): String = engine.engineVersion()
 
@@ -880,7 +1302,9 @@ class HubRepository(
     companion object {
         const val SETTING_THEME_MODE = "theme_mode"
         const val SETTING_LANGUAGE = "language_code"
+        const val SETTING_FONT_SCALE = "font_scale_key"
         const val SETTING_NOTIFICATIONS_ENABLED = "notifications_enabled"
+        const val SETTING_NOTIFICATION_PREVIEW = "notification_show_preview"
         const val SETTING_DEBUG_LOGS = "debug_logs_enabled"
     }
 }

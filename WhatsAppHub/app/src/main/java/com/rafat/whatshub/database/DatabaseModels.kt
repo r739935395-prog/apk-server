@@ -1,8 +1,10 @@
 package com.rafat.whatshub.database
 
+import kotlinx.serialization.Serializable
+
 /**
- * Strongly-typed models representing the 10 SQLite tables in WhatsApp Hub.
- * Every account-owned record carries accountId in 1..4 and enforces composite identity.
+ * Strongly-typed models representing the encrypted SQLite domain tables in Rafat Hub v1.1.0.
+ * Every account-owned record carries accountId in 1..4 and enforces strict composite isolation.
  */
 
 enum class AccountStatus(val wireValue: String) {
@@ -22,6 +24,7 @@ enum class AccountStatus(val wireValue: String) {
     }
 }
 
+@Serializable
 data class AccountRecord(
     val accountId: Int,
     val label: String,
@@ -36,6 +39,7 @@ data class AccountRecord(
     val updatedAtMs: Long
 )
 
+@Serializable
 data class SessionMetadataRecord(
     val accountId: Int,
     val deviceJid: String,
@@ -45,6 +49,16 @@ data class SessionMetadataRecord(
     val sessionDir: String
 )
 
+@Serializable
+data class IdentityMappingRecord(
+    val accountId: Int,
+    val lidJid: String,
+    val pnJid: String,
+    val mappingSource: String = "verified",
+    val updatedAtMs: Long = 0L
+)
+
+@Serializable
 data class ContactRecord(
     val accountId: Int,
     val contactJid: String,
@@ -53,14 +67,27 @@ data class ContactRecord(
     val pushName: String,
     val businessName: String,
     val isOnline: Boolean,
-    val lastSeenMs: Long
+    val lastSeenMs: Long,
+    val lidJid: String = "",
+    val pnJid: String = ""
 ) {
     val displayName: String
-        get() = listOf(fullName, pushName, businessName, firstName)
-            .firstOrNull { it.isNotBlank() }
-            ?: contactJid.substringBefore('@')
+        get() = IdentityResolver.cleanDisplayTitle(
+            explicitNames = listOf(fullName, pushName, businessName, firstName),
+            canonicalJid = contactJid,
+            verifiedPnJid = pnJid
+        )
+
+    val formattedPhone: String
+        get() = IdentityResolver.formatVerifiedPhone(
+            pnJid.ifBlank { if (IdentityResolver.isPhoneJid(contactJid)) contactJid else "" }
+        )
+
+    val isUnmappedLidOnly: Boolean
+        get() = IdentityResolver.isLidJid(contactJid) && pnJid.isBlank()
 }
 
+@Serializable
 data class ChatSummaryRecord(
     val accountId: Int,
     val chatJid: String,
@@ -73,9 +100,28 @@ data class ChatSummaryRecord(
     val lastSenderName: String,
     val unreadCount: Int,
     val isTyping: Boolean,
-    val typingSender: String
-)
+    val typingSender: String,
+    val isPinned: Boolean = false,
+    val pinnedAtMs: Long = 0L,
+    val isArchived: Boolean = false,
+    val isMuted: Boolean = false,
+    val markedUnread: Boolean = false,
+    val lidJid: String = "",
+    val pnJid: String = ""
+) {
+    val effectiveUnreadCount: Int
+        get() = if (unreadCount > 0) unreadCount else if (markedUnread) 1 else 0
 
+    val cleanTitle: String
+        get() = IdentityResolver.cleanDisplayTitle(
+            explicitNames = listOf(title),
+            canonicalJid = chatJid,
+            verifiedPnJid = pnJid,
+            isGroup = isGroup
+        )
+}
+
+@Serializable
 data class MessageMediaRecord(
     val accountId: Int,
     val chatJid: String,
@@ -95,6 +141,7 @@ data class MessageMediaRecord(
     val errorMessage: String
 )
 
+@Serializable
 data class MessageRecord(
     val accountId: Int,
     val chatJid: String,
@@ -114,9 +161,33 @@ data class MessageRecord(
     val isEdited: Boolean,
     val status: String, // "pending", "sent", "delivered", "read", "failed"
     val timestampMs: Long,
-    val media: MessageMediaRecord? = null
+    val media: MessageMediaRecord? = null,
+    val rawChatJid: String = "",
+    val clientMessageId: String = "",
+    val transmissionAck: Boolean = false,
+    val errorReason: String = ""
+) {
+    val contentKind: String
+        get() = when {
+            isDeleted -> "deleted"
+            mediaType.isNotBlank() -> "media_$mediaType"
+            quotedMessageId.isNotBlank() -> "quoted_text"
+            else -> "text"
+        }
+}
+
+data class GlobalMessageSearchHit(
+    val accountId: Int,
+    val chatJid: String,
+    val chatTitle: String,
+    val messageId: String,
+    val senderName: String,
+    val textSnippet: String,
+    val timestampMs: Long,
+    val isFromMe: Boolean
 )
 
+@Serializable
 data class GroupMemberRecord(
     val accountId: Int,
     val groupJid: String,
@@ -126,6 +197,7 @@ data class GroupMemberRecord(
     val isSuperAdmin: Boolean
 )
 
+@Serializable
 data class GroupRecord(
     val accountId: Int,
     val groupJid: String,
@@ -140,6 +212,7 @@ data class GroupRecord(
     val members: List<GroupMemberRecord> = emptyList()
 )
 
+@Serializable
 data class SyncStateRecord(
     val accountId: Int,
     val syncType: String,
@@ -151,13 +224,44 @@ data class SyncStateRecord(
     val updatedAtMs: Long
 )
 
+@Serializable
+data class PortableBackupSnapshot(
+    val formatVersion: Int = 2,
+    val appVersion: String = "1.1.0",
+    val exportedAtMs: Long,
+    val accounts: List<AccountRecord> = emptyList(),
+    val identityMappings: List<IdentityMappingRecord> = emptyList(),
+    val contacts: List<ContactRecord> = emptyList(),
+    val groups: List<GroupRecord> = emptyList(),
+    val chats: List<ChatSummaryRecord> = emptyList(),
+    val messages: List<MessageRecord> = emptyList(),
+    val settings: Map<String, String> = emptyMap()
+)
+
+data class AppPreferencesState(
+    val themeMode: String = "amoled",
+    val languageCode: String = "en",
+    val fontScaleKey: String = "default", // "small", "default", "large", "xlarge"
+    val notificationsEnabled: Boolean = true,
+    val notificationShowPreview: Boolean = true,
+    val accountNotifications: Map<Int, Boolean> = mapOf(1 to true, 2 to true, 3 to true, 4 to true),
+    val debugLogsEnabled: Boolean = false
+) {
+    val fontScaleMultiplier: Float
+        get() = when (fontScaleKey) {
+            "small" -> 0.90f
+            "large" -> 1.12f
+            "xlarge" -> 1.24f
+            else -> 1.00f
+        }
+}
+
 object AccountPalette {
-    // Mandatory consistent visual identity for each of the 4 accounts:
-    // Account 1: Green, Account 2: Blue, Account 3: Purple, Account 4: Orange
-    const val ACCOUNT_1_GREEN = 0xFF00C853L
-    const val ACCOUNT_2_BLUE = 0xFF2979FFL
-    const val ACCOUNT_3_PURPLE = 0xFFAA00FFL
-    const val ACCOUNT_4_ORANGE = 0xFFFF6D00L
+    // Distinct per-account color identity (Green, Blue, Purple, Gold-Amber) harmonized with Rafat Hub dark UI
+    const val ACCOUNT_1_GREEN = 0xFF10B981L
+    const val ACCOUNT_2_BLUE = 0xFF3B82F6L
+    const val ACCOUNT_3_PURPLE = 0xFFA855F7L
+    const val ACCOUNT_4_ORANGE = 0xFFF59E0BL
 
     fun colorHexFor(accountId: Int): Long = when (accountId) {
         1 -> ACCOUNT_1_GREEN

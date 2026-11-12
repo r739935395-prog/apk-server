@@ -158,3 +158,69 @@ func TestFourAccountIsolationDisconnectRemoveAndSessionRestore(t *testing.T) {
 		}
 	}
 }
+
+func TestLIDToPNMappingReceiptCorrelationAndDeviceSentEcho(t *testing.T) {
+	tmp := t.TempDir()
+	router := events.NewRouter(256)
+	mgr := NewManager(filepath.Join(tmp, "sessions"), filepath.Join(tmp, "media"), router)
+	defer mgr.Shutdown()
+
+	seedPairedSession(t, mgr, 1, "967770000001")
+	_ = router.Poll(256)
+
+	slot, _ := mgr.Slot(1)
+	lidJID := types.NewJID("18899900011122", types.HiddenUserServer)
+	pnJID := types.NewJID("967771112222", types.DefaultUserServer)
+
+	// 1. Incoming @lid message carrying SenderAlt -> should emit identity_mapping + canonical PN message
+	slot.handleWhatsmeowEvent(1, &waEvents.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:      lidJID,
+				Sender:    lidJID,
+				SenderAlt: pnJID,
+				IsFromMe:  false,
+			},
+			ID:        "LID_IN_MSG_1",
+			PushName:  "Customer One",
+			Timestamp: time.Unix(1700001000, 0),
+		},
+		Message: &waE2E.Message{
+			Conversation: proto.String("Hello over LID"),
+		},
+	})
+
+	evs := router.Poll(32)
+	var sawMapping, sawMsg bool
+	for _, ev := range evs {
+		if ev.Type == events.EventIdentityMapping {
+			sawMapping = true
+			if ev.LIDJID != "18899900011122@lid" || ev.PNJID != "967771112222@s.whatsapp.net" {
+				t.Fatalf("unexpected mapping event: %+v", ev)
+			}
+		}
+		if ev.Type == events.EventMessage {
+			sawMsg = true
+			if ev.ChatJID != "967771112222@s.whatsapp.net" || ev.RawChatJID != "18899900011122@lid" {
+				t.Fatalf("expected canonical PN ChatJID, got chat=%s raw=%s", ev.ChatJID, ev.RawChatJID)
+			}
+		}
+	}
+	if !sawMapping || !sawMsg {
+		t.Fatalf("expected both identity_mapping and message events, got mapping=%v msg=%v", sawMapping, sawMsg)
+	}
+
+	// 2. Subsequent @lid receipt WITHOUT SenderAlt -> must still resolve to canonical PN chat!
+	slot.handleWhatsmeowEvent(1, &waEvents.Receipt{
+		MessageSource: types.MessageSource{
+			Chat:   lidJID,
+			Sender: lidJID,
+		},
+		MessageIDs: []types.MessageID{"3EB0ABCDEF123456789012"},
+		Type:       types.ReceiptTypeRead,
+	})
+	recEvs := router.Poll(16)
+	if len(recEvs) != 1 || recEvs[0].ChatJID != "967771112222@s.whatsapp.net" || recEvs[0].ReceiptStatus != "read" {
+		t.Fatalf("expected receipt resolved to canonical PN chat, got %+v", recEvs)
+	}
+}

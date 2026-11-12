@@ -55,6 +55,12 @@ object NativeBridge {
     external fun nativeGetAccountsSnapshot(): ByteArray
 
     @JvmStatic
+    external fun nativePeekEvents(maxBatch: Int): ByteArray
+
+    @JvmStatic
+    external fun nativeAckEvents(upToSeq: Long): ByteArray
+
+    @JvmStatic
     external fun nativePollEvents(maxBatch: Int): ByteArray
 
     @JvmStatic

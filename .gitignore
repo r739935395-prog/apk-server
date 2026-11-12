@@ -1,0 +1,13 @@
+# NEVER commit Android signing keystores, private keys, or credential vaults
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pk8
+*.key
+*private_key*
+*signing-vault*
+*.vault.enc
+*SIGNING_CREDENTIALS*
+*OWNER_PRIVATE_CREDENTIALS*
+local.properties

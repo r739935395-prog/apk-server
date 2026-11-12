@@ -28,7 +28,7 @@ var initWhatsmeowPropsOnce sync.Once
 
 func ensureDevicePropsInitialized() {
 	initWhatsmeowPropsOnce.Do(func() {
-		store.SetOSInfo("WhatsApp Hub", [3]uint32{1, 0, 0})
+		store.SetOSInfo("Rafat Hub", [3]uint32{1, 1, 0})
 		store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
 	})
 }
@@ -69,6 +69,9 @@ type AccountSlot struct {
 	reconnectCancel context.CancelFunc
 	qrCancel        context.CancelFunc
 	qrReadyCh       chan struct{}
+
+	lidMu        sync.Mutex
+	emittedPairs map[string]string // lidJID -> pnJID emitted to Android for this account
 }
 
 // Manager manages the four independent WhatsApp account slots (1..4).
@@ -91,7 +94,7 @@ func NewManager(sessionsRoot, mediaRoot string, router *events.Router) *Manager 
 		sessionsRoot: sessionsRoot,
 		mediaRoot:    mediaRoot,
 		router:       router,
-		mediaSem:     make(chan struct{}, 3), // Bound concurrent media downloads across all 4 accounts
+		mediaSem:     make(chan struct{}, 3),
 	}
 	m.networkUp.Store(true)
 
@@ -99,17 +102,23 @@ func NewManager(sessionsRoot, mediaRoot string, router *events.Router) *Manager 
 		acctID := i + 1
 		slotSessionsDir := filepath.Join(sessionsRoot, fmt.Sprintf("account_%d", acctID))
 		slotMediaDir := filepath.Join(mediaRoot, fmt.Sprintf("account_%d", acctID))
-		m.slots[i] = &AccountSlot{
-			mgr:         m,
-			accountID:   acctID,
-			sessionsDir: slotSessionsDir,
-			mediaDir:    slotMediaDir,
-			router:      router,
-			mediaSem:    m.mediaSem,
-			historyProc: synchronization.NewProcessor(acctID, router),
-			backoff:     NewBackoffPolicy(DefaultInitialDelay, DefaultMaxDelay, DefaultMaxAttempts),
-			state:       events.StateNotConnected,
+		hist := synchronization.NewProcessor(acctID, router)
+		slot := &AccountSlot{
+			mgr:          m,
+			accountID:    acctID,
+			sessionsDir:  slotSessionsDir,
+			mediaDir:     slotMediaDir,
+			router:       router,
+			mediaSem:     m.mediaSem,
+			historyProc:  hist,
+			backoff:      NewBackoffPolicy(DefaultInitialDelay, DefaultMaxDelay, DefaultMaxAttempts),
+			state:        events.StateNotConnected,
+			emittedPairs: make(map[string]string, 256),
 		}
+		hist.SetLIDMappingSink(func(lidJID, pnJID string) {
+			slot.recordVerifiedLIDMapping(lidJID, pnJID, "history_sync", false)
+		})
+		m.slots[i] = slot
 	}
 	return m
 }
@@ -192,12 +201,10 @@ func (s *AccountSlot) ensureClientLocked(ctx context.Context) (*whatsmeow.Client
 	}
 
 	cli := whatsmeow.NewClient(dev, logger.Sub("WA"))
-	// Disable whatsmeow's internal blind auto-reconnect so our per-account BackoffPolicy
-	// and Android ConnectivityManager control reconnection deterministically without loops.
 	cli.EnableAutoReconnect = false
 	cli.AutoTrustIdentity = true
 
-	acctID := s.accountID // Capture immutable accountID in closure
+	acctID := s.accountID
 	cli.AddEventHandler(func(rawEvt any) {
 		s.handleWhatsmeowEvent(acctID, rawEvt)
 	})
@@ -211,6 +218,108 @@ func (s *AccountSlot) ensureClientLocked(ctx context.Context) (*whatsmeow.Client
 		return cli, true, nil
 	}
 	return cli, false, nil
+}
+
+// recordVerifiedLIDMapping persists a verified (lidJID, pnJID) pair into this account's
+// whatsmeow LIDStore and emits EventIdentityMapping once per newly discovered pair.
+func (s *AccountSlot) recordVerifiedLIDMapping(lidStr, pnStr, source string, emitEvent bool) {
+	if !strings.HasSuffix(lidStr, "@lid") || !strings.HasSuffix(pnStr, "@s.whatsapp.net") {
+		return
+	}
+	s.lidMu.Lock()
+	already := s.emittedPairs[lidStr] == pnStr
+	s.emittedPairs[lidStr] = pnStr
+	s.lidMu.Unlock()
+
+	s.mu.Lock()
+	cli := s.client
+	s.mu.Unlock()
+
+	if cli != nil && cli.Store != nil && cli.Store.LIDs != nil {
+		lidJID, err1 := types.ParseJID(lidStr)
+		pnJID, err2 := types.ParseJID(pnStr)
+		if err1 == nil && err2 == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = cli.Store.LIDs.PutLIDMapping(ctx, lidJID.ToNonAD(), pnJID.ToNonAD())
+			cancel()
+		}
+	}
+
+	if emitEvent && !already {
+		s.router.Emit(events.Envelope{
+			Type:          events.EventIdentityMapping,
+			AccountID:     s.accountID,
+			ChatJID:       pnStr,
+			RawChatJID:    lidStr,
+			LidJID:        lidStr,
+			PnJID:         pnStr,
+			MappingSource: source,
+		})
+	}
+}
+
+// resolvePeerIdentity resolves a 1:1 peer JID and optional alternate JID strictly within s.accountID.
+// When a verified @s.whatsapp.net PN exists (either via stanza alt JID or whatsmeow's LIDStore),
+// canonical returns the @s.whatsapp.net JID while preserving raw, lidJID, and pnJID.
+// If only @lid is known, canonical remains @lid (never fabricating a fake phone number).
+func (s *AccountSlot) resolvePeerIdentity(primary, alt types.JID, source string) (canonical, raw, lidStr, pnStr string) {
+	p := primary.ToNonAD()
+	if p.IsEmpty() {
+		return "", "", "", ""
+	}
+	raw = p.String()
+
+	// Group or broadcast JIDs are never LID/PN user identities.
+	if p.Server == types.GroupServer || p.Server == types.BroadcastServer || p.Server == types.NewsletterServer {
+		return raw, raw, "", ""
+	}
+
+	a := alt.ToNonAD()
+	if p.Server == types.HiddenUserServer || strings.HasSuffix(raw, "@lid") {
+		lidStr = raw
+	} else if p.Server == types.DefaultUserServer || strings.HasSuffix(raw, "@s.whatsapp.net") {
+		pnStr = raw
+	}
+
+	if !a.IsEmpty() {
+		aStr := a.String()
+		if (a.Server == types.HiddenUserServer || strings.HasSuffix(aStr, "@lid")) && lidStr == "" {
+			lidStr = aStr
+		} else if (a.Server == types.DefaultUserServer || strings.HasSuffix(aStr, "@s.whatsapp.net")) && pnStr == "" {
+			pnStr = aStr
+		}
+	}
+
+	s.mu.Lock()
+	cli := s.client
+	s.mu.Unlock()
+
+	if cli != nil && cli.Store != nil && cli.Store.LIDs != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if lidStr != "" && pnStr == "" {
+			if lidParsed, err := types.ParseJID(lidStr); err == nil {
+				if resolvedPN, lErr := cli.Store.LIDs.GetPNForLID(ctx, lidParsed.ToNonAD()); lErr == nil && !resolvedPN.IsEmpty() {
+					pnStr = resolvedPN.ToNonAD().String()
+				}
+			}
+		} else if pnStr != "" && lidStr == "" {
+			if pnParsed, err := types.ParseJID(pnStr); err == nil {
+				if resolvedLID, lErr := cli.Store.LIDs.GetLIDForPN(ctx, pnParsed.ToNonAD()); lErr == nil && !resolvedLID.IsEmpty() {
+					lidStr = resolvedLID.ToNonAD().String()
+				}
+			}
+		}
+		cancel()
+	}
+
+	if lidStr != "" && pnStr != "" {
+		s.recordVerifiedLIDMapping(lidStr, pnStr, source, true)
+		return pnStr, raw, lidStr, pnStr
+	}
+	if pnStr != "" {
+		return pnStr, raw, lidStr, pnStr
+	}
+	return raw, raw, lidStr, pnStr
 }
 
 // Connect starts QR pairing (if unlinked) or restores an existing encrypted session (if paired).
@@ -294,7 +403,6 @@ func (s *AccountSlot) consumeQRChannel(qrChan <-chan whatsmeow.QRChannelItem, qr
 		case whatsmeow.QRChannelEventCode:
 			closeReady()
 			s.mu.Lock()
-			// Only transition to waiting_for_qr if user hasn't switched to phone-code pairing
 			if s.state != events.StatePairing && s.state != events.StateConnected {
 				s.state = events.StateWaitingForQR
 				s.router.Emit(events.Envelope{
@@ -359,8 +467,6 @@ func (s *AccountSlot) consumeQRChannel(qrChan <-chan whatsmeow.QRChannelItem, qr
 var nonDigitsRe = regexp.MustCompile(`[^0-9]+`)
 
 // RequestPairingCode initiates phone-number linking for an unlinked slot using whatsmeow.Client.PairPhone.
-// IMPORTANT: Returning the code only transitions the slot to StatePairing ("Pairing").
-// The account ONLY reaches StateConnected after WhatsApp confirms PairSuccess + Connected.
 func (m *Manager) RequestPairingCode(accountID int, rawPhone string) (string, error) {
 	slot, err := m.Slot(accountID)
 	if err != nil {
@@ -394,7 +500,6 @@ func (m *Manager) RequestPairingCode(accountID int, rawPhone string) (string, er
 		return "", errors.New("client unavailable")
 	}
 
-	// Wait up to 12s for the login WebSocket handshake / first QR signal as required by whatsmeow PairPhone docs.
 	if qrReady != nil {
 		select {
 		case <-qrReady:
@@ -428,8 +533,7 @@ func (m *Manager) RequestPairingCode(accountID int, rawPhone string) (string, er
 	return code, nil
 }
 
-// Disconnect cleanly closes the WebSocket for one account without deleting its saved session,
-// and without affecting the other three accounts.
+// Disconnect cleanly closes the WebSocket for one account without deleting its saved session.
 func (m *Manager) Disconnect(accountID int) error {
 	slot, err := m.Slot(accountID)
 	if err != nil {
@@ -484,6 +588,10 @@ func (m *Manager) RemoveAccount(accountID int) error {
 	_ = os.RemoveAll(slot.mediaDir)
 	slot.historyProc.Reset()
 
+	slot.lidMu.Lock()
+	slot.emittedPairs = make(map[string]string, 64)
+	slot.lidMu.Unlock()
+
 	slot.mu.Lock()
 	slot.ownJID = ""
 	slot.phone = ""
@@ -494,7 +602,6 @@ func (m *Manager) RemoveAccount(accountID int) error {
 }
 
 // OnNetworkChanged notifies all four isolated slots of Android network transitions.
-// When connectivity returns, disconnected/reconnecting paired accounts reset backoff and reconnect.
 func (m *Manager) OnNetworkChanged(available bool) {
 	wasUp := m.networkUp.Swap(available)
 	if !available {
@@ -647,15 +754,18 @@ func (s *AccountSlot) handleWhatsmeowEvent(accountID int, rawEvt any) {
 		s.processReceipt(evt)
 
 	case *waEvents.ChatPresence:
-		chatJID := evt.Chat.ToNonAD().String()
-		senderJID := evt.Sender.ToNonAD().String()
+		canonicalChat, rawChat, lidJID, pnJID := s.resolvePeerIdentity(evt.Chat, types.EmptyJID, "chat_presence")
+		senderCanon, _, _, _ := s.resolvePeerIdentity(evt.Sender, types.EmptyJID, "chat_presence_sender")
 		s.router.Emit(events.Envelope{
-			Type:      events.EventTyping,
-			AccountID: s.accountID,
-			ChatJID:   chatJID,
-			SenderJID: senderJID,
-			IsTyping:  evt.State == types.ChatPresenceComposing,
-			MediaKind: string(evt.Media),
+			Type:       events.EventTyping,
+			AccountID:  s.accountID,
+			ChatJID:    canonicalChat,
+			RawChatJID: rawChat,
+			LidJID:     lidJID,
+			PnJID:      pnJID,
+			SenderJID:  senderCanon,
+			IsTyping:   evt.State == types.ChatPresenceComposing,
+			MediaKind:  string(evt.Media),
 		})
 
 	case *waEvents.Presence:
@@ -663,10 +773,13 @@ func (s *AccountSlot) handleWhatsmeowEvent(accountID int, rawEvt any) {
 		if !evt.LastSeen.IsZero() {
 			lastSeenMs = evt.LastSeen.UnixMilli()
 		}
+		canonicalFrom, _, lidJID, pnJID := s.resolvePeerIdentity(evt.From, types.EmptyJID, "presence")
 		s.router.Emit(events.Envelope{
 			Type:       events.EventPresence,
 			AccountID:  s.accountID,
-			JID:        evt.From.ToNonAD().String(),
+			JID:        canonicalFrom,
+			LidJID:     lidJID,
+			PnJID:      pnJID,
 			IsOnline:   !evt.Unavailable,
 			LastSeenMs: lastSeenMs,
 		})
@@ -681,12 +794,15 @@ func (s *AccountSlot) handleWhatsmeowEvent(accountID int, rawEvt any) {
 
 	case *waEvents.PushName:
 		if !evt.JID.IsEmpty() && evt.NewPushName != "" {
+			canonJID, _, lidJID, pnJID := s.resolvePeerIdentity(evt.JID, types.EmptyJID, "push_name")
 			s.router.Emit(events.Envelope{
 				Type:      events.EventContactsBatch,
 				AccountID: s.accountID,
 				Contacts: []events.ContactDTO{
 					{
-						JID:      evt.JID.ToNonAD().String(),
+						JID:      canonJID,
+						LidJID:   lidJID,
+						PnJID:    pnJID,
 						PushName: evt.NewPushName,
 					},
 				},
@@ -696,14 +812,49 @@ func (s *AccountSlot) handleWhatsmeowEvent(accountID int, rawEvt any) {
 }
 
 func (s *AccountSlot) processIncomingMessage(evt *waEvents.Message) {
-	if evt == nil || evt.Info.Chat.IsEmpty() {
+	if evt == nil {
 		return
 	}
-	chatJID := evt.Info.Chat.ToNonAD().String()
-	if chatJID == "status@broadcast" {
+	rawChatPrimary := evt.Info.Chat
+	// When a message is sent from the primary WhatsApp Messenger phone, DeviceSentMeta or
+	// DeviceSentMessage.DestinationJID identifies the target chat if Info.Chat points to self.
+	if evt.Info.DeviceSentMeta != nil && evt.Info.DeviceSentMeta.DestinationJID != "" {
+		if destJID, err := types.ParseJID(evt.Info.DeviceSentMeta.DestinationJID); err == nil && !destJID.IsEmpty() {
+			s.mu.Lock()
+			own := s.ownJID
+			s.mu.Unlock()
+			if rawChatPrimary.IsEmpty() || rawChatPrimary.ToNonAD().String() == own {
+				rawChatPrimary = destJID
+			}
+		}
+	}
+	if dsm := evt.Message.GetDeviceSentMessage(); dsm != nil && dsm.GetDestinationJID() != "" {
+		if destJID, err := types.ParseJID(dsm.GetDestinationJID()); err == nil && !destJID.IsEmpty() {
+			s.mu.Lock()
+			own := s.ownJID
+			s.mu.Unlock()
+			if rawChatPrimary.IsEmpty() || rawChatPrimary.ToNonAD().String() == own {
+				rawChatPrimary = destJID
+			}
+		}
+	}
+
+	if rawChatPrimary.IsEmpty() {
 		return
 	}
-	senderJID := evt.Info.Sender.ToNonAD().String()
+	nonADChat := rawChatPrimary.ToNonAD().String()
+	if nonADChat == "status@broadcast" || strings.HasSuffix(nonADChat, "@broadcast") {
+		return
+	}
+
+	// Determine alternate JID for 1:1 conversations from whatsmeow MessageSource
+	chatAlt := evt.Info.RecipientAlt
+	if !evt.Info.IsGroup && chatAlt.IsEmpty() && !evt.Info.IsFromMe {
+		chatAlt = evt.Info.SenderAlt
+	}
+	chatJID, rawChatJID, lidJID, pnJID := s.resolvePeerIdentity(rawChatPrimary, chatAlt, "message")
+	senderJID, _, senderLidJID, senderPnJID := s.resolvePeerIdentity(evt.Info.Sender, evt.Info.SenderAlt, "message_sender")
+
 	msgID := string(evt.Info.ID)
 	tsMs := evt.Info.Timestamp.UnixMilli()
 	if tsMs <= 0 {
@@ -719,6 +870,9 @@ func (s *AccountSlot) processIncomingMessage(evt *waEvents.Message) {
 			Type:            events.EventMessageRevoked,
 			AccountID:       s.accountID,
 			ChatJID:         chatJID,
+			RawChatJID:      rawChatJID,
+			LidJID:          lidJID,
+			PnJID:           pnJID,
 			TargetMessageID: targetID,
 			SenderJID:       senderJID,
 			TimestampMs:     tsMs,
@@ -736,6 +890,9 @@ func (s *AccountSlot) processIncomingMessage(evt *waEvents.Message) {
 			Type:            events.EventReaction,
 			AccountID:       s.accountID,
 			ChatJID:         chatJID,
+			RawChatJID:      rawChatJID,
+			LidJID:          lidJID,
+			PnJID:           pnJID,
 			TargetMessageID: parsed.TargetMessageID,
 			SenderJID:       senderJID,
 			Emoji:           parsed.ReactionEmoji,
@@ -747,6 +904,9 @@ func (s *AccountSlot) processIncomingMessage(evt *waEvents.Message) {
 			Type:            events.EventMessageRevoked,
 			AccountID:       s.accountID,
 			ChatJID:         chatJID,
+			RawChatJID:      rawChatJID,
+			LidJID:          lidJID,
+			PnJID:           pnJID,
 			TargetMessageID: parsed.TargetMessageID,
 			SenderJID:       senderJID,
 			TimestampMs:     tsMs,
@@ -757,10 +917,31 @@ func (s *AccountSlot) processIncomingMessage(evt *waEvents.Message) {
 		if evt.Info.IsFromMe {
 			status = "sent"
 		}
+		// Keep sender PushName fresh in contacts batch for 1:1 and group senders when non-empty
+		if !evt.Info.IsFromMe && strings.TrimSpace(evt.Info.PushName) != "" && senderJID != "" {
+			s.router.Emit(events.Envelope{
+				Type:      events.EventContactsBatch,
+				AccountID: s.accountID,
+				Contacts: []events.ContactDTO{
+					{
+						JID:      senderJID,
+						LidJID:   senderLidJID,
+						PnJID:    senderPnJID,
+						PushName: strings.TrimSpace(evt.Info.PushName),
+					},
+				},
+			})
+		}
+
 		env := events.Envelope{
 			Type:             events.EventMessage,
 			AccountID:        s.accountID,
 			ChatJID:          chatJID,
+			RawChatJID:       rawChatJID,
+			LidJID:           lidJID,
+			PnJID:            pnJID,
+			SenderLidJID:     senderLidJID,
+			SenderPnJID:      senderPnJID,
 			MessageID:        msgID,
 			CompositeChatKey: events.CompositeChatKey(s.accountID, chatJID),
 			CompositeMsgKey:  events.CompositeMessageKey(s.accountID, chatJID, msgID),
@@ -788,14 +969,13 @@ func (s *AccountSlot) processIncomingMessage(evt *waEvents.Message) {
 		}
 		s.router.Emit(env)
 
-		// Auto-download smaller media (< 16 MB) asynchronously on bounded worker pool
 		if parsed.MediaType != "" && parsed.DirectPath != "" && parsed.MediaKeyB64 != "" && parsed.FileSize <= 16*1024*1024 {
-			go s.autoDownloadMedia(chatJID, msgID, parsed)
+			go s.autoDownloadMedia(chatJID, rawChatJID, msgID, parsed)
 		}
 	}
 }
 
-func (s *AccountSlot) autoDownloadMedia(chatJID, msgID string, parsed messaging.ParsedMessage) {
+func (s *AccountSlot) autoDownloadMedia(chatJID, rawChatJID, msgID string, parsed messaging.ParsedMessage) {
 	s.mediaSem <- struct{}{}
 	defer func() { <-s.mediaSem }()
 
@@ -823,6 +1003,7 @@ func (s *AccountSlot) autoDownloadMedia(chatJID, msgID string, parsed messaging.
 		Type:         events.EventMediaDownloaded,
 		AccountID:    s.accountID,
 		ChatJID:      chatJID,
+		RawChatJID:   rawChatJID,
 		MessageID:    msgID,
 		MediaPath:    localPath,
 		ErrorMessage: errMsg,
@@ -835,7 +1016,7 @@ func (s *AccountSlot) processReceipt(evt *waEvents.Receipt) {
 	}
 	var receiptStatus string
 	switch evt.Type {
-	case types.ReceiptTypeRead:
+	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf, types.ReceiptTypePlayed, types.ReceiptTypePlayedSelf:
 		receiptStatus = "read"
 	case types.ReceiptTypeDelivered, types.ReceiptTypeSender:
 		receiptStatus = "delivered"
@@ -846,10 +1027,18 @@ func (s *AccountSlot) processReceipt(evt *waEvents.Receipt) {
 	for _, id := range evt.MessageIDs {
 		ids = append(ids, string(id))
 	}
+	chatAlt := evt.RecipientAlt
+	if chatAlt.IsEmpty() && !evt.IsGroup {
+		chatAlt = evt.SenderAlt
+	}
+	chatJID, rawChatJID, lidJID, pnJID := s.resolvePeerIdentity(evt.Chat, chatAlt, "receipt")
 	s.router.Emit(events.Envelope{
 		Type:          events.EventReceipt,
 		AccountID:     s.accountID,
-		ChatJID:       evt.Chat.ToNonAD().String(),
+		ChatJID:       chatJID,
+		RawChatJID:    rawChatJID,
+		LidJID:        lidJID,
+		PnJID:         pnJID,
 		MessageIDs:    ids,
 		ReceiptStatus: receiptStatus,
 		TimestampMs:   evt.Timestamp.UnixMilli(),
@@ -889,8 +1078,14 @@ func (s *AccountSlot) fetchContacts() ([]events.ContactDTO, error) {
 	}
 	out := make([]events.ContactDTO, 0, len(rawMap))
 	for jid, info := range rawMap {
+		canon, _, lidJID, pnJID := s.resolvePeerIdentity(jid, types.EmptyJID, "contacts_store")
+		if canon == "" {
+			continue
+		}
 		out = append(out, events.ContactDTO{
-			JID:          jid.ToNonAD().String(),
+			JID:          canon,
+			LidJID:       lidJID,
+			PnJID:        pnJID,
 			FullName:     info.FullName,
 			FirstName:    info.FirstName,
 			PushName:     info.PushName,

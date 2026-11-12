@@ -1,7 +1,9 @@
 package com.rafat.whatshub.inbox
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,7 +26,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddComment
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.MarkChatUnread
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -36,6 +42,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -60,9 +67,12 @@ import com.rafat.whatshub.R
 import com.rafat.whatshub.database.AccountRecord
 import com.rafat.whatshub.database.AccountStatus
 import com.rafat.whatshub.database.ChatSummaryRecord
+import com.rafat.whatshub.database.GlobalMessageSearchHit
 import com.rafat.whatshub.ui.components.AccountBadge
 import com.rafat.whatshub.ui.components.ConversationAvatar
+import com.rafat.whatshub.ui.components.RafatHubMonogramMark
 import com.rafat.whatshub.ui.components.formatHubTimestamp
+import com.rafat.whatshub.ui.theme.BrandWarmGold
 import com.rafat.whatshub.ui.theme.accountColor
 
 @Composable
@@ -73,6 +83,7 @@ fun UnifiedInboxScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     var showNewChatDialog by rememberSaveable { mutableStateOf(false) }
+    var selectedChatForActions by remember { mutableStateOf<ChatSummaryRecord?>(null) }
 
     val accountMap = remember(state.accounts) {
         state.accounts.associateBy { it.accountId }
@@ -96,19 +107,32 @@ fun UnifiedInboxScreen(
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // Top bar with title & 4-account live connection summary pill
+            // Luxury Rafat Hub brand header + 4-account live status pill
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = stringResource(R.string.inbox_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    RafatHubMonogramMark(size = 38.dp)
+                    Column {
+                        Text(
+                            text = stringResource(R.string.inbox_title),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = stringResource(R.string.brand_subtitle),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 ConnectionSummaryPill(
                     accounts = state.accounts,
                     connectedCount = connectedCount,
@@ -116,7 +140,7 @@ fun UnifiedInboxScreen(
                 )
             }
 
-            // Search bar
+            // Global search bar (chats, contacts, AND message bodies)
             OutlinedTextField(
                 value = state.filters.searchQuery,
                 onValueChange = viewModel::setSearchQuery,
@@ -138,7 +162,7 @@ fun UnifiedInboxScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Account filter row (All + Account 1..4 with their signature Green/Blue/Purple/Orange colors)
+            // Account filter row (All + Account 1..4)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -180,7 +204,7 @@ fun UnifiedInboxScreen(
                 }
             }
 
-            // Secondary filters: Unread, Groups, Direct
+            // Secondary filters: Unread, Groups, Direct, Archived
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -207,11 +231,22 @@ fun UnifiedInboxScreen(
                     },
                     label = { Text(stringResource(R.string.filter_direct)) }
                 )
+                if (state.archivedCount > 0 || state.filters.showArchived) {
+                    FilterChip(
+                        selected = state.filters.showArchived,
+                        onClick = viewModel::toggleArchivedView,
+                        label = {
+                            val labelBase = stringResource(R.string.filter_archived)
+                            Text(if (!state.filters.showArchived && state.archivedCount > 0) "$labelBase (${state.archivedCount})" else labelBase)
+                        }
+                    )
+                }
             }
 
-            if (state.conversations.isEmpty()) {
+            if (state.conversations.isEmpty() && state.messageHits.isEmpty()) {
                 EmptyInboxPlaceholder(
                     modifier = Modifier.weight(1f),
+                    isFiltered = state.filters.searchQuery.isNotBlank() || state.filters.unreadOnly || state.filters.showArchived,
                     onManageAccounts = onNavigateToAccounts
                 )
             } else {
@@ -227,15 +262,57 @@ fun UnifiedInboxScreen(
                         ConversationCard(
                             chat = chat,
                             accountLabel = accountMap[chat.accountId]?.label,
-                            onClick = {
-                                // Critical isolation rule: always open with the exact owning accountId + chatJid
-                                onOpenConversation(chat.accountId, chat.chatJid)
-                            }
+                            onClick = { onOpenConversation(chat.accountId, chat.chatJid) },
+                            onLongClick = { selectedChatForActions = chat }
                         )
+                    }
+
+                    if (state.messageHits.isNotEmpty()) {
+                        item(key = "msg_search_header") {
+                            Text(
+                                text = "Matching Messages (${state.messageHits.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = BrandWarmGold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
+                            )
+                        }
+                        items(
+                            items = state.messageHits,
+                            key = { "hit:${it.accountId}:${it.chatJid}:${it.messageId}" }
+                        ) { hit ->
+                            MessageSearchHitCard(
+                                hit = hit,
+                                accountLabel = accountMap[hit.accountId]?.label,
+                                onClick = { onOpenConversation(hit.accountId, hit.chatJid) }
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    selectedChatForActions?.let { target ->
+        ChatContextActionsDialog(
+            chat = target,
+            onDismiss = { selectedChatForActions = null },
+            onTogglePin = {
+                viewModel.togglePin(target)
+                selectedChatForActions = null
+            },
+            onToggleArchive = {
+                viewModel.toggleArchive(target)
+                selectedChatForActions = null
+            },
+            onToggleMute = {
+                viewModel.toggleMute(target)
+                selectedChatForActions = null
+            },
+            onToggleUnread = {
+                viewModel.toggleUnreadState(target)
+                selectedChatForActions = null
+            }
+        )
     }
 
     if (showNewChatDialog) {
@@ -286,17 +363,23 @@ private fun ConnectionSummaryPill(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationCard(
     chat: ChatSummaryRecord,
     accountLabel: String?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val acctColor = accountColor(chat.accountId)
+    val displayTitle = chat.cleanTitle
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -307,7 +390,6 @@ private fun ConversationCard(
                 .height(IntrinsicSize.Min),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Color-coded start stripe identifying the owning account at a glance
             Box(
                 modifier = Modifier
                     .width(5.dp)
@@ -322,7 +404,7 @@ private fun ConversationCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 ConversationAvatar(
-                    title = chat.title,
+                    title = displayTitle,
                     accountId = chat.accountId,
                     isGroup = chat.isGroup
                 )
@@ -335,14 +417,35 @@ private fun ConversationCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = chat.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
                             modifier = Modifier.weight(1f, fill = false)
-                        )
+                        ) {
+                            Text(
+                                text = displayTitle,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (chat.isPinned) {
+                                Icon(
+                                    imageVector = Icons.Default.PushPin,
+                                    contentDescription = "Pinned",
+                                    tint = BrandWarmGold,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            if (chat.isMuted) {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsOff,
+                                    contentDescription = "Muted",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = formatHubTimestamp(chat.lastMessageTsMs),
@@ -402,8 +505,91 @@ private fun ConversationCard(
 }
 
 @Composable
+private fun MessageSearchHitCard(
+    hit: GlobalMessageSearchHit,
+    accountLabel: String?,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = hit.chatTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                AccountBadge(accountId = hit.accountId, label = accountLabel)
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = hit.snippet,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChatContextActionsDialog(
+    chat: ChatSummaryRecord,
+    onDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onToggleArchive: () -> Unit,
+    onToggleMute: () -> Unit,
+    onToggleUnread: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(chat.cleanTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onTogglePin, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.PushPin, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(if (chat.isPinned) R.string.chat_action_unpin else R.string.chat_action_pin))
+                }
+                OutlinedButton(onClick = onToggleArchive, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Archive, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(if (chat.isArchived) R.string.chat_action_unarchive else R.string.chat_action_archive))
+                }
+                OutlinedButton(onClick = onToggleMute, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.NotificationsOff, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(if (chat.isMuted) R.string.chat_action_unmute else R.string.chat_action_mute))
+                }
+                OutlinedButton(onClick = onToggleUnread, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.MarkChatUnread, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(if (chat.unreadCount > 0) R.string.chat_action_mark_read else R.string.chat_action_mark_unread))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
 private fun EmptyInboxPlaceholder(
     modifier: Modifier = Modifier,
+    isFiltered: Boolean = false,
     onManageAccounts: () -> Unit
 ) {
     Column(
@@ -414,7 +600,7 @@ private fun EmptyInboxPlaceholder(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = stringResource(R.string.empty_inbox_title),
+            text = if (isFiltered) "No matching conversations" else stringResource(R.string.empty_inbox_title),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
@@ -424,9 +610,11 @@ private fun EmptyInboxPlaceholder(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(modifier = Modifier.height(18.dp))
-        Button(onClick = onManageAccounts) {
-            Text(stringResource(R.string.manage_accounts_cta))
+        if (!isFiltered) {
+            Spacer(modifier = Modifier.height(18.dp))
+            Button(onClick = onManageAccounts) {
+                Text(stringResource(R.string.manage_accounts_cta))
+            }
         }
     }
 }

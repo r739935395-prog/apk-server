@@ -2,14 +2,14 @@ package com.rafat.whatshub.settings
 
 import android.content.Context
 import android.net.Uri
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.rafat.whatshub.database.WhatsAppHubDatabase
+import com.rafat.whatshub.database.AccountRecord
+import com.rafat.whatshub.repository.EngineHealthTelemetry
 import com.rafat.whatshub.repository.HubRepository
-import com.rafat.whatshub.security.DiagnosticEntry
+import com.rafat.whatshub.security.PortableRestoreOutcome
+import com.rafat.whatshub.security.SanitizedLogEntry
 import com.rafat.whatshub.security.SanitizedLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,63 +17,89 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 data class SettingsUiState(
+    val accounts: List<AccountRecord> = emptyList(),
+    val themeMode: String = "amoled",
     val languageCode: String = "en",
-    val themeMode: String = "dark",
+    val fontScaleKey: String = "default",
     val notificationsEnabled: Boolean = true,
+    val notificationShowPreview: Boolean = true,
+    val accountNotifications: Map<Int, Boolean> = mapOf(1 to true, 2 to true, 3 to true, 4 to true),
     val debugLogsEnabled: Boolean = false,
     val mediaCacheBytes: Long = 0L,
     val engineVersion: String = "",
-    val diagnosticLogs: List<DiagnosticEntry> = emptyList()
+    val telemetry: EngineHealthTelemetry? = null,
+    val recentLogs: List<SanitizedLogEntry> = emptyList()
 )
 
 class SettingsViewModel(private val repository: HubRepository) : ViewModel() {
+
     private val _mediaBytes = MutableStateFlow(0L)
     private val _statusToast = MutableStateFlow<String?>(null)
     val statusToast: StateFlow<String?> = _statusToast.asStateFlow()
 
     val uiState: StateFlow<SettingsUiState> = combine(
-        repository.database.changeVersion,
+        repository.accounts,
+        repository.appPreferences,
         _mediaBytes,
         SanitizedLogger.entries
-    ) { _, bytes, logs ->
+    ) { accounts, prefs, bytes, logs ->
+        val telemetry = repository.getEngineHealthTelemetry()
         SettingsUiState(
-            languageCode = repository.getLanguageCode(),
-            themeMode = repository.getThemeMode(),
-            notificationsEnabled = repository.notificationsEnabled(),
-            debugLogsEnabled = repository.isDebugLoggingEnabled(),
+            accounts = accounts,
+            themeMode = prefs.themeMode,
+            languageCode = prefs.languageCode,
+            fontScaleKey = prefs.fontScaleKey,
+            notificationsEnabled = prefs.notificationsEnabled,
+            notificationShowPreview = prefs.notificationShowPreview,
+            accountNotifications = prefs.accountNotifications,
+            debugLogsEnabled = prefs.debugLogsEnabled,
             mediaCacheBytes = bytes,
-            engineVersion = repository.getEngineVersion(),
-            diagnosticLogs = logs
+            engineVersion = telemetry.engineVersion,
+            telemetry = telemetry,
+            recentLogs = logs.takeLast(80).reversed()
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
+    }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     init {
-        refreshStorageSize()
+        refreshStorageMetrics()
     }
 
-    fun refreshStorageSize() {
+    fun refreshStorageMetrics() {
         viewModelScope.launch {
             _mediaBytes.value = repository.calculateMediaStorageBytes()
         }
-    }
-
-    fun selectLanguage(langCode: String) {
-        repository.setLanguageCode(langCode)
-        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(langCode))
     }
 
     fun selectTheme(mode: String) {
         repository.setThemeMode(mode)
     }
 
+    fun selectLanguage(lang: String) {
+        repository.setLanguageCode(lang)
+    }
+
+    fun selectFontScale(scaleKey: String) {
+        repository.setFontScaleKey(scaleKey)
+    }
+
     fun setNotifications(enabled: Boolean) {
         repository.setNotificationsEnabled(enabled)
+    }
+
+    fun setNotificationPreview(enabled: Boolean) {
+        repository.setNotificationPreviewEnabled(enabled)
+    }
+
+    fun setAccountNotification(accountId: Int, enabled: Boolean) {
+        repository.setAccountNotificationEnabled(accountId, enabled)
     }
 
     fun setDebugLogging(enabled: Boolean) {
@@ -83,48 +109,69 @@ class SettingsViewModel(private val repository: HubRepository) : ViewModel() {
     fun clearMediaCache() {
         viewModelScope.launch {
             val freed = repository.clearMediaCache()
-            _mediaBytes.value = repository.calculateMediaStorageBytes()
+            refreshStorageMetrics()
             val mb = "%.2f".format(freed / (1024.0 * 1024.0))
-            _statusToast.value = "Cleared downloaded media cache ($mb MB freed)."
+            _statusToast.value = "Cleared $mb MB of cached media files."
         }
-    }
-
-    fun clearDiagnosticLogs() {
-        SanitizedLogger.clear()
     }
 
     fun exportEncryptedBackupToUri(context: Context, destUri: Uri, passphrase: String) {
         viewModelScope.launch {
             runCatching {
-                val dbFile = context.getDatabasePath(WhatsAppHubDatabase.DB_FILE_NAME)
-                val encryptedBytes = repository.exportEncryptedBackup(dbFile, passphrase)
+                val encryptedBytes = repository.exportPortableEncryptedBackup(passphrase)
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(destUri)?.use { out ->
                         out.write(encryptedBytes)
-                    } ?: error("Cannot open backup destination")
+                    } ?: error("Cannot write to selected backup file")
                 }
-                _statusToast.value = "Encrypted backup exported (${encryptedBytes.size / 1024} KB)."
+                _statusToast.value = "Portable encrypted backup exported (${encryptedBytes.size / 1024} KB)."
             }.onFailure { err ->
                 _statusToast.value = "Backup failed: ${err.message}"
             }
         }
     }
 
-    fun restoreEncryptedBackupFromUri(context: Context, srcUri: Uri, passphrase: String) {
+    fun restoreEncryptedBackupFromUri(context: Context, sourceUri: Uri, passphrase: String) {
         viewModelScope.launch {
             runCatching {
                 val archiveBytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(srcUri)?.use { it.readBytes() }
+                    context.contentResolver.openInputStream(sourceUri)?.use { it.readBytes() }
                         ?: error("Cannot read selected backup file")
                 }
-                val staging = File(context.cacheDir, "restore_staging_${System.currentTimeMillis()}")
-                val entries = repository.verifyAndExtractEncryptedBackup(archiveBytes, passphrase, staging)
-                staging.deleteRecursively()
-                _statusToast.value = "Backup verified & decrypted (${entries.size} encrypted items validated)."
+                when (val outcome = repository.restorePortableEncryptedBackup(archiveBytes, passphrase)) {
+                    is PortableRestoreOutcome.RestoredV2 -> {
+                        _statusToast.value =
+                            "Restored ${outcome.importedChats} chats, ${outcome.importedMessages} messages, and ${outcome.importedContacts} contacts."
+                    }
+                    is PortableRestoreOutcome.LegacyV1KeystoreBound -> {
+                        _statusToast.value =
+                            "Verified legacy v1.0.0 archive (${outcome.verifiedEntries.size} file). v1.0.0 DB was hardware-Keystore-bound; re-link your accounts in Accounts tab to auto-sync history via WhatsApp HistorySync."
+                    }
+                }
             }.onFailure { err ->
-                _statusToast.value = "Restore failed: ${err.message}"
+                _statusToast.value = "Restore failed (verify passphrase): ${err.message}"
             }
         }
+    }
+
+    fun exportSanitizedLogsToUri(context: Context, destUri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                val text = repository.exportSanitizedLogsText()
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(destUri)?.use {
+                        it.write(text.toByteArray(Charsets.UTF_8))
+                    }
+                }
+                _statusToast.value = "Sanitized diagnostic logs exported."
+            }.onFailure { err ->
+                _statusToast.value = "Log export failed: ${err.message}"
+            }
+        }
+    }
+
+    fun clearLogs() {
+        SanitizedLogger.clear()
     }
 
     fun consumeToast() {

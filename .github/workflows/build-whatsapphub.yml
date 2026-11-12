@@ -1,4 +1,4 @@
-name: Build & Verify WhatsApp Hub APK
+name: Build & Verify Rafat Hub v1.1.0 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-whatsapphub:
+  build-rafat-hub:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     runs-on: ubuntu-latest
     permissions:
@@ -16,12 +16,24 @@ jobs:
     env:
       GOTOOLCHAIN: auto
       CGO_ENABLED: "1"
+      EXPECTED_CERT_SHA256: "55:B8:FA:6F:32:A3:C4:76:4E:73:47:5D:F3:6C:06:2C:08:30:27:C8:B3:B4:8B:61:B7:F2:AC:3B:D0:B4:76:49"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Security Gate — Verify Zero Keystore or Secret Files in Git
+        run: |
+          set -euo pipefail
+          FORBIDDEN="$(git ls-files | grep -Ei '\.(jks|keystore|p12|pfx|key|vault\.enc)$|OWNER_PRIVATE_CREDENTIALS' || true)"
+          if [ -n "$FORBIDDEN" ]; then
+            echo "FATAL SECURITY VIOLATION: Signing material detected in Git index:"
+            echo "$FORBIDDEN"
+            exit 1
+          fi
+          echo "Security Gate PASSED: Zero keystore or private key files tracked in Git."
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -61,11 +73,11 @@ jobs:
             go version
             echo "=== GO MOD TIDY ==="
             go mod tidy
-            echo "=== GO UNIT & INTEGRATION TESTS ==="
+            echo "=== GO UNIT & RACE DETECTOR TESTS ==="
             go test -v -race ./...
           } 2>&1 | tee /tmp/go-test.log
 
-      - name: Go Engine — Cross-Compile ARM64 JNI Shared Library (libwhatshub_engine.so)
+      - name: Go Engine — Cross-Compile 16 KB Aligned ARM64 JNI Library (libwhatshub_engine.so)
         working-directory: WhatsAppHub/whatsapp-engine
         run: |
           set -eo pipefail
@@ -89,104 +101,124 @@ jobs:
             rm -f "$OUT_DIR/libwhatshub_engine.h"
             ls -lh "$OUT_DIR/libwhatshub_engine.so"
             file "$OUT_DIR/libwhatshub_engine.so"
+            echo "=== ELF LOAD SEGMENT ALIGNMENT (16 KB = 0x4000) ==="
+            readelf -l "$OUT_DIR/libwhatshub_engine.so" | grep -E "(LOAD|Align)" || true
+            echo "=== EXPORTED JNI SYMBOLS ==="
             readelf -Ws "$OUT_DIR/libwhatshub_engine.so" | grep "Java_com_rafat_whatshub_bridge_NativeBridge_" | grep -v "_cgoexp_"
           } 2>&1 | tee /tmp/go-ndk.log
 
-      - name: Android App — Execute Kotlin & Robolectric Unit/Integration Tests
+      - name: Android App — Execute Kotlin & Robolectric Verification Suite (v1.1.0)
         working-directory: WhatsAppHub
         run: |
           set -eo pipefail
-          gradle testReleaseUnitTest 2>&1 | tee /tmp/gradle-test.log
+          gradle testReleaseUnitTest --info 2>&1 | tee /tmp/gradle-test.log
+          echo "=== JUNIT XML SUMMARY ===" | tee -a /tmp/gradle-summary.log
+          grep -h "<testsuite " app/build/test-results/testReleaseUnitTest/*.xml | tee -a /tmp/gradle-summary.log
 
-      - name: Android App — Generate Release Keystore, Build & Sign Release APK
+      - name: Android App — Assemble Release APK & Sign with Permanent Key (When Secret Configured)
         working-directory: WhatsAppHub
+        env:
+          SECRET_KEYSTORE_B64: ${{ secrets.RAFAT_HUB_KEYSTORE_BASE64 }}
+          SECRET_KEYSTORE_PASS: ${{ secrets.RAFAT_HUB_KEYSTORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.RAFAT_HUB_KEY_ALIAS }}
+          SECRET_KEY_PASS: ${{ secrets.RAFAT_HUB_KEY_PASSWORD }}
         run: |
           set -eo pipefail
           {
-            KEYSTORE_FILE="/tmp/whatshub-release.jks"
-            STORE_PASS="$(openssl rand -hex 20)"
-            keytool -genkeypair \
-              -v \
-              -keystore "$KEYSTORE_FILE" \
-              -alias whatshub \
-              -keyalg RSA \
-              -keysize 4096 \
-              -validity 10000 \
-              -storepass "$STORE_PASS" \
-              -keypass "$STORE_PASS" \
-              -dname "CN=WhatsApp Hub, OU=Mobile Engineering, O=Rafat, L=Ibb, C=YE"
-
-            WHATSHUB_KEYSTORE_FILE="$KEYSTORE_FILE" \
-            WHATSHUB_KEYSTORE_PASSWORD="$STORE_PASS" \
-            WHATSHUB_KEY_ALIAS="whatshub" \
-            WHATSHUB_KEY_PASSWORD="$STORE_PASS" \
-            gradle assembleRelease
-
-            cp app/build/outputs/apk/release/app-release.apk ./app-release.apk
-            rm -f "$KEYSTORE_FILE"
-
             AAPT2="$ANDROID_HOME/build-tools/35.0.0/aapt2"
+            ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
             APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
 
+            rm -f ./Rafat-Hub-v1.1.0-arm64-release.apk ./Rafat-Hub-v1.1.0-arm64-unsigned-aligned.apk
+
+            if [ -n "$SECRET_KEYSTORE_B64" ] && [ -n "$SECRET_KEYSTORE_PASS" ] && [ -n "$SECRET_KEY_ALIAS" ] && [ -n "$SECRET_KEY_PASS" ]; then
+              echo "=== PERMANENT SIGNING SECRET DETECTED: SIGNING IN RAM ==="
+              KS_RAM="/dev/shm/rafat-hub-ci-keystore.p12"
+              printf '%s' "$SECRET_KEYSTORE_B64" | tr -d ' \n\r\t' | base64 -d > "$KS_RAM"
+              chmod 600 "$KS_RAM"
+              trap 'rm -f "$KS_RAM"' EXIT
+
+              RAFAT_HUB_KEYSTORE_PATH="$KS_RAM" \
+              RAFAT_HUB_KEYSTORE_PASSWORD="$SECRET_KEYSTORE_PASS" \
+              RAFAT_HUB_KEY_ALIAS="$SECRET_KEY_ALIAS" \
+              RAFAT_HUB_KEY_PASSWORD="$SECRET_KEY_PASS" \
+              gradle assembleRelease
+
+              cp app/build/outputs/apk/release/app-release.apk ./Rafat-Hub-v1.1.0-arm64-release.apk
+              rm -f "$KS_RAM"
+
+              "$ZIPALIGN" -c -P 16 4 ./Rafat-Hub-v1.1.0-arm64-release.apk
+              CERT_OUT="$("$APKSIGNER" verify --verbose --print-certs ./Rafat-Hub-v1.1.0-arm64-release.apk)"
+              echo "$CERT_OUT"
+              echo "$CERT_OUT" | grep -F "$EXPECTED_CERT_SHA256"
+              TARGET_APK="./Rafat-Hub-v1.1.0-arm64-release.apk"
+            else
+              echo "=== GITHUB SECRET NOT YET POPULATED: ASSEMBLING 16KB-ALIGNED UNSIGNED RELEASE APK (NO EPHEMERAL KEY EVER GENERATED) ==="
+              gradle assembleRelease
+              UNSIGNED_RAW="$(ls app/build/outputs/apk/release/*-release-unsigned.apk | head -n 1)"
+              "$ZIPALIGN" -P 16 -f 4 "$UNSIGNED_RAW" ./Rafat-Hub-v1.1.0-arm64-unsigned-aligned.apk
+              "$ZIPALIGN" -c -P 16 4 ./Rafat-Hub-v1.1.0-arm64-unsigned-aligned.apk
+              TARGET_APK="./Rafat-Hub-v1.1.0-arm64-unsigned-aligned.apk"
+            fi
+
             echo "=== APK FILE METRICS ==="
-            ls -lh ./app-release.apk
-            sha256sum ./app-release.apk
+            ls -lh "$TARGET_APK"
+            sha256sum "$TARGET_APK"
 
             echo "=== AAPT2 BADGING ==="
-            "$AAPT2" dump badging ./app-release.apk | grep -E "^(package:|sdkVersion:|targetSdkVersion:|uses-permission:|application-label|launchable-activity:|native-code:)" || true
+            "$AAPT2" dump badging "$TARGET_APK" | grep -E "^(package:|sdkVersion:|targetSdkVersion:|uses-permission:|application-label|launchable-activity:|native-code:)" || true
 
-            echo "=== NATIVE LIBRARIES IN APK ==="
-            unzip -l ./app-release.apk | grep -E "lib/.*\.so"
-
-            echo "=== APKSIGNER VERIFICATION ==="
-            "$APKSIGNER" verify --verbose --print-certs ./app-release.apk
+            echo "=== UNCOMPRESSED NATIVE LIBRARIES IN APK ==="
+            unzip -lv "$TARGET_APK" | grep -E "(Stored|Defl:N).*lib/.*\.so" || unzip -l "$TARGET_APK" | grep -E "lib/.*\.so"
           } 2>&1 | tee /tmp/apk-build.log
 
-      - name: Upload Signed APK Artifact
+      - name: Upload APK Build Output Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: WhatsAppHub-app-release-apk
-          path: WhatsAppHub/app-release.apk
+          name: Rafat-Hub-v1.1.0-apk-output
+          path: |
+            WhatsAppHub/Rafat-Hub-v1.1.0-arm64-*.apk
+            WhatsAppHub/docs/ci-verification-report-v1.1.txt
 
-      - name: Commit Verified Artifacts or Diagnostic Log Back to Branch
+      - name: Commit Verified Build Output or Failure Log Back to Branch
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git pull --rebase origin "${GITHUB_REF_NAME}" || true
 
-          if [ -f WhatsAppHub/app-release.apk ]; then
+          if ls WhatsAppHub/Rafat-Hub-v1.1.0-arm64-*.apk >/dev/null 2>&1; then
             {
-              echo "WhatsApp Hub CI Build & Verification Report"
-              echo "==========================================="
+              echo "Rafat Hub v1.1.0 (versionCode=2) CI Build & Verification Report"
+              echo "==============================================================="
               cat /tmp/go-test.log || true
               echo ""
               cat /tmp/go-ndk.log || true
               echo ""
-              tail -n 60 /tmp/gradle-test.log || true
+              cat /tmp/gradle-summary.log || true
               echo ""
-              tail -n 80 /tmp/apk-build.log || true
-            } > WhatsAppHub/docs/ci-verification-report.txt
+              tail -n 90 /tmp/apk-build.log || true
+            } > WhatsAppHub/docs/ci-verification-report-v1.1.txt
             rm -f WhatsAppHub/docs/ci-failure-log.txt
-            git add WhatsAppHub/whatsapp-engine/go.mod WhatsAppHub/whatsapp-engine/go.sum WhatsAppHub/docs/ci-verification-report.txt
-            git add -f WhatsAppHub/app-release.apk
-            git commit -m "chore(ci): attach verified signed WhatsAppHub/app-release.apk and test report [skip ci]" || exit 0
+            git add WhatsAppHub/whatsapp-engine/go.mod WhatsAppHub/whatsapp-engine/go.sum WhatsAppHub/docs/ci-verification-report-v1.1.txt
+            git add -f WhatsAppHub/Rafat-Hub-v1.1.0-arm64-*.apk
+            git commit -m "chore(ci): attach verified Rafat Hub v1.1.0 build output and test report [skip ci]" || exit 0
             git push origin "HEAD:${GITHUB_REF_NAME}"
           else
             {
-              echo "=== CI DIAGNOSTIC FAILURE LOG ==="
-              tail -n 120 /tmp/go-test.log 2>/dev/null || true
+              echo "=== CI DIAGNOSTIC FAILURE LOG (v1.1.0) ==="
+              tail -n 140 /tmp/go-test.log 2>/dev/null || true
               echo "--- NDK ---"
-              tail -n 120 /tmp/go-ndk.log 2>/dev/null || true
+              tail -n 140 /tmp/go-ndk.log 2>/dev/null || true
               echo "--- GRADLE TEST ---"
-              grep -E "(^e: |FAILED|FAILURE|What went wrong|^> )" /tmp/gradle-test.log 2>/dev/null || true
-              tail -n 120 /tmp/gradle-test.log 2>/dev/null || true
+              grep -E "(^e: |FAILED|FAILURE|What went wrong|^> |AssertionError)" /tmp/gradle-test.log 2>/dev/null || true
+              tail -n 160 /tmp/gradle-test.log 2>/dev/null || true
               echo "--- APK BUILD ---"
               grep -E "(^e: |FAILED|FAILURE|What went wrong|^> )" /tmp/apk-build.log 2>/dev/null || true
-              tail -n 120 /tmp/apk-build.log 2>/dev/null || true
+              tail -n 140 /tmp/apk-build.log 2>/dev/null || true
             } > WhatsAppHub/docs/ci-failure-log.txt
             git add WhatsAppHub/docs/ci-failure-log.txt WhatsAppHub/whatsapp-engine/go.sum 2>/dev/null || true
-            git commit -m "chore(ci): record build diagnostic log [skip ci]" || exit 0
+            git commit -m "chore(ci): record v1.1.0 diagnostic log [skip ci]" || exit 0
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi

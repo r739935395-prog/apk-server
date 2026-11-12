@@ -66,8 +66,18 @@ func ParseRecipientJID(raw string) (types.JID, error) {
 	return jid.ToNonAD(), nil
 }
 
+func buildSendExtra(clientMsgID string) []whatsmeow.SendRequestExtra {
+	trimmed := strings.TrimSpace(clientMsgID)
+	if trimmed == "" {
+		return nil
+	}
+	return []whatsmeow.SendRequestExtra{{ID: types.MessageID(trimmed)}}
+}
+
 // SendText sends a plain or quoted text message on the given isolated client.
-func SendText(ctx context.Context, cli *whatsmeow.Client, chatJID, text string, quote *ReplyQuote) (SendResult, error) {
+// When clientMsgID is non-empty, whatsmeow transmits using that exact deterministic MessageID
+// so the pre-persisted Pending record on Android reconciles idempotently with zero ID drift.
+func SendText(ctx context.Context, cli *whatsmeow.Client, chatJID, text string, quote *ReplyQuote, clientMsgID ...string) (SendResult, error) {
 	if cli == nil || !cli.IsConnected() {
 		return SendResult{}, errors.New("account client is not connected")
 	}
@@ -93,7 +103,11 @@ func SendText(ctx context.Context, cli *whatsmeow.Client, chatJID, text string, 
 		}
 	}
 
-	resp, err := cli.SendMessage(ctx, to, msg)
+	var preID string
+	if len(clientMsgID) > 0 {
+		preID = clientMsgID[0]
+	}
+	resp, err := cli.SendMessage(ctx, to, msg, buildSendExtra(preID)...)
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -157,14 +171,15 @@ func RevokeMessage(ctx context.Context, cli *whatsmeow.Client, chatJID, senderJI
 
 // MediaUploadRequest describes a local file to upload and send on a specific account.
 type MediaUploadRequest struct {
-	ChatJID     string
-	MediaType   string // "image", "video", "audio", "voice", "document", "sticker"
-	FilePath    string
-	MimeType    string
-	Caption     string
-	FileName    string
-	DurationSec uint32
-	Quote       *ReplyQuote
+	ChatJID         string
+	ClientMessageID string
+	MediaType       string // "image", "video", "audio", "voice", "document", "sticker"
+	FilePath        string
+	MimeType        string
+	Caption         string
+	FileName        string
+	DurationSec     uint32
+	Quote           *ReplyQuote
 }
 
 // SendMedia uploads a file to WhatsApp CDN using encrypted media keys and sends the message.
@@ -293,7 +308,7 @@ func SendMedia(ctx context.Context, cli *whatsmeow.Client, req MediaUploadReques
 		}
 	}
 
-	resp, err := cli.SendMessage(ctx, to, msg)
+	resp, err := cli.SendMessage(ctx, to, msg, buildSendExtra(req.ClientMessageID)...)
 	if err != nil {
 		return SendResult{}, err
 	}

@@ -10,7 +10,8 @@ data class EngineResult(
     @SerialName("message_id") val messageId: String = "",
     @SerialName("timestamp_ms") val timestampMs: Long = 0L,
     @SerialName("pairing_code") val pairingCode: String = "",
-    @SerialName("media_path") val mediaPath: String = ""
+    @SerialName("media_path") val mediaPath: String = "",
+    @SerialName("acked_count") val ackedCount: Int = 0
 )
 
 @Serializable
@@ -28,6 +29,8 @@ data class EngineSlotSnapshot(
 @Serializable
 data class EngineContactDto(
     val jid: String = "",
+    @SerialName("lid_jid") val lidJid: String = "",
+    @SerialName("pn_jid") val pnJid: String = "",
     @SerialName("full_name") val fullName: String = "",
     @SerialName("first_name") val firstName: String = "",
     @SerialName("push_name") val pushName: String = "",
@@ -73,9 +76,17 @@ data class EngineEventEnvelope(
     @SerialName("expires_in_sec") val expiresInSec: Int = 20,
     @SerialName("pairing_code") val pairingCode: String = "",
 
+    @SerialName("raw_chat_jid") val rawChatJid: String = "",
+    @SerialName("lid_jid") val lidJid: String = "",
+    @SerialName("pn_jid") val pnJid: String = "",
+    @SerialName("sender_lid_jid") val senderLidJid: String = "",
+    @SerialName("sender_pn_jid") val senderPnJid: String = "",
+    @SerialName("mapping_source") val mappingSource: String = "",
+
     @SerialName("chat_jid") val chatJid: String = "",
     @SerialName("chat_name") val chatName: String = "",
     @SerialName("message_id") val messageId: String = "",
+    @SerialName("client_msg_id") val clientMessageId: String = "",
     @SerialName("composite_chat_key") val compositeChatKey: String = "",
     @SerialName("composite_msg_key") val compositeMsgKey: String = "",
     @SerialName("sender_jid") val senderJid: String = "",
@@ -125,9 +136,16 @@ data class EngineEventEnvelope(
     @SerialName("log_message") val logMessage: String = ""
 )
 
+data class PeekedEventBatch(
+    val events: List<EngineEventEnvelope>,
+    val highestRawSeq: Long,
+    val malformedCount: Int = 0
+)
+
 @Serializable
 data class SendTextPayload(
     @SerialName("chat_jid") val chatJid: String,
+    @SerialName("client_msg_id") val clientMessageId: String = "",
     val text: String,
     @SerialName("quoted_message_id") val quotedMessageId: String = "",
     @SerialName("quoted_sender_jid") val quotedSenderJid: String = "",
@@ -137,6 +155,7 @@ data class SendTextPayload(
 @Serializable
 data class SendMediaPayload(
     @SerialName("chat_jid") val chatJid: String,
+    @SerialName("client_msg_id") val clientMessageId: String = "",
     @SerialName("media_type") val mediaType: String,
     @SerialName("file_path") val filePath: String,
     @SerialName("mime_type") val mimeType: String,

@@ -15,7 +15,7 @@ import (
 )
 
 // EngineVersion pins the exact upstream whatsmeow revision bundled into the native library.
-const EngineVersion = "whatshub-engine/1.0.0 (go.mau.fi/whatsmeow@c88388f983b4bc43dfd0bcc2b46969fcde82d61f)"
+const EngineVersion = "rafat-hub-engine/1.1.0 (go.mau.fi/whatsmeow@c88388f983b4bc43dfd0bcc2b46969fcde82d61f)"
 
 // ResultEnvelope is the standard JSON response returned across JNI for imperative calls.
 type ResultEnvelope struct {
@@ -25,6 +25,7 @@ type ResultEnvelope struct {
 	TimestampMs int64  `json:"timestamp_ms,omitempty"`
 	PairingCode string `json:"pairing_code,omitempty"`
 	MediaPath   string `json:"media_path,omitempty"`
+	AckedCount  int    `json:"acked_count,omitempty"`
 }
 
 func okResult() string {
@@ -77,7 +78,7 @@ func (b *Bridge) Init(sessionsDir, mediaDir, caCertPath string) string {
 	if b.manager != nil {
 		return okResult()
 	}
-	b.router = events.NewRouter(8192)
+	b.router = events.NewRouter(32768)
 	b.manager = session.NewManager(sessionsDir, mediaDir, b.router)
 	return okResult()
 }
@@ -170,7 +171,31 @@ func (b *Bridge) GetAccountsSnapshot() string {
 	return mgr.GetAllSnapshotsJSON()
 }
 
-// PollEvents drains up to maxBatch queued events as a JSON array.
+// PeekEvents reads up to maxBatch queued events as a JSON array WITHOUT removing them.
+// Android must call AckEvents(upToSeq) after durably persisting the batch to SQLite.
+func (b *Bridge) PeekEvents(maxBatch int) string {
+	_, router, err := b.getComponents()
+	if err != nil {
+		return "[]"
+	}
+	return router.PeekJSON(maxBatch)
+}
+
+// AckEvents removes all queued events with Seq <= upToSeq after durable Android persistence.
+func (b *Bridge) AckEvents(upToSeq uint64) string {
+	_, router, err := b.getComponents()
+	if err != nil {
+		return errResult(err)
+	}
+	acked := router.Ack(upToSeq)
+	out, _ := json.Marshal(ResultEnvelope{
+		OK:         true,
+		AckedCount: acked,
+	})
+	return string(out)
+}
+
+// PollEvents drains up to maxBatch queued events as a JSON array (legacy convenience).
 func (b *Bridge) PollEvents(maxBatch int) string {
 	_, router, err := b.getComponents()
 	if err != nil {
@@ -181,6 +206,7 @@ func (b *Bridge) PollEvents(maxBatch int) string {
 
 type sendTextPayload struct {
 	ChatJID         string `json:"chat_jid"`
+	ClientMessageID string `json:"client_msg_id,omitempty"`
 	Text            string `json:"text"`
 	QuotedMessageID string `json:"quoted_message_id,omitempty"`
 	QuotedSenderJID string `json:"quoted_sender_jid,omitempty"`
@@ -212,7 +238,7 @@ func (b *Bridge) SendText(accountID int, payloadJSON string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
-	res, err := messaging.SendText(ctx, cli, req.ChatJID, req.Text, quote)
+	res, err := messaging.SendText(ctx, cli, req.ChatJID, req.Text, quote, req.ClientMessageID)
 	if err != nil {
 		return errResult(err)
 	}
@@ -226,6 +252,7 @@ func (b *Bridge) SendText(accountID int, payloadJSON string) string {
 
 type sendMediaPayload struct {
 	ChatJID         string `json:"chat_jid"`
+	ClientMessageID string `json:"client_msg_id,omitempty"`
 	MediaType       string `json:"media_type"`
 	FilePath        string `json:"file_path"`
 	MimeType        string `json:"mime_type"`
@@ -263,14 +290,15 @@ func (b *Bridge) SendMedia(accountID int, payloadJSON string) string {
 	defer cancel()
 
 	res, err := messaging.SendMedia(ctx, cli, messaging.MediaUploadRequest{
-		ChatJID:     req.ChatJID,
-		MediaType:   req.MediaType,
-		FilePath:    req.FilePath,
-		MimeType:    req.MimeType,
-		Caption:     req.Caption,
-		FileName:    req.FileName,
-		DurationSec: req.DurationSec,
-		Quote:       quote,
+		ChatJID:         req.ChatJID,
+		ClientMessageID: req.ClientMessageID,
+		MediaType:       req.MediaType,
+		FilePath:        req.FilePath,
+		MimeType:        req.MimeType,
+		Caption:         req.Caption,
+		FileName:        req.FileName,
+		DurationSec:     req.DurationSec,
+		Quote:           quote,
 	})
 	if err != nil {
 		return errResult(err)

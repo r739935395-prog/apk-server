@@ -11,9 +11,11 @@ import com.rafat.whatshub.database.ChatSummaryRecord
 import com.rafat.whatshub.database.ContactRecord
 import com.rafat.whatshub.database.GroupMemberRecord
 import com.rafat.whatshub.database.GroupRecord
+import com.rafat.whatshub.database.IdentityResolver
 import com.rafat.whatshub.database.MessageRecord
 import com.rafat.whatshub.repository.HubRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -31,13 +34,19 @@ data class ConversationUiState(
     val accountId: Int,
     val chatJid: String,
     val account: AccountRecord? = null,
+    val allAccounts: List<AccountRecord> = emptyList(),
     val chat: ChatSummaryRecord? = null,
     val contact: ContactRecord? = null,
     val group: GroupRecord? = null,
     val groupMembers: List<GroupMemberRecord> = emptyList(),
-    val messages: List<MessageRecord> = emptyList()
+    val messages: List<MessageRecord> = emptyList(),
+    val inChatSearchQuery: String = "",
+    val inChatSearchResults: List<MessageRecord> = emptyList(),
+    val forwardCandidateChats: List<ChatSummaryRecord> = emptyList(),
+    val canLoadOlder: Boolean = false
 )
 
+@OptIn(FlowPreview::class)
 class ConversationViewModel(
     private val repository: HubRepository,
     val accountId: Int,
@@ -53,34 +62,52 @@ class ConversationViewModel(
     private val _errorBanner = MutableStateFlow<String?>(null)
     val errorBanner: StateFlow<String?> = _errorBanner.asStateFlow()
 
-    private var typingStopJob: Job? = null
+    private val _windowLimit = MutableStateFlow(300)
+    private val _inChatSearchQuery = MutableStateFlow("")
+
+    private var typingResetJob: Job? = null
 
     val uiState: StateFlow<ConversationUiState> = combine(
         repository.accounts,
-        repository.database.changeVersion
-    ) { accounts, _ ->
+        repository.database.observeConversationInvalidations(accountId, chatJid).debounce(25L),
+        _windowLimit,
+        _inChatSearchQuery
+    ) { accounts, _, limit, searchQuery ->
+        val canonicalJid = repository.database.resolveCanonicalChatJid(accountId, chatJid)
         val acct = accounts.firstOrNull { it.accountId == accountId }
-        val chat = repository.database.getChatSummary(accountId, chatJid)
-        val isGroup = chatJid.endsWith("@g.us")
-        val contact = if (!isGroup) {
-            repository.database.getContacts(accountFilter = accountId).firstOrNull { it.contactJid == chatJid }
+        val chatSummary = repository.database.getChatSummary(accountId, canonicalJid)
+        val contact = if (!IdentityResolver.isGroupJid(canonicalJid)) {
+            repository.database.getContact(accountId, canonicalJid)
         } else null
-        val group = if (isGroup) {
-            repository.database.getGroups(accountFilter = accountId).firstOrNull { it.groupJid == chatJid }
+        val group = if (IdentityResolver.isGroupJid(canonicalJid)) {
+            repository.database.getGroup(accountId, canonicalJid)
         } else null
-        val members = if (isGroup) {
-            repository.database.getGroupMembers(accountId, chatJid)
+        val members = if (group != null) {
+            repository.database.getGroupMembers(accountId, canonicalJid)
         } else emptyList()
+
+        val msgs = repository.database.getConversationMessages(accountId, canonicalJid, limit = limit)
+        val searchHits = if (searchQuery.trim().isNotEmpty()) {
+            repository.database.searchMessagesInConversation(accountId, canonicalJid, searchQuery)
+        } else {
+            emptyList()
+        }
+        val forwardChats = repository.database.getUnifiedInbox(includeArchived = false).take(40)
 
         ConversationUiState(
             accountId = accountId,
-            chatJid = chatJid,
+            chatJid = canonicalJid,
             account = acct,
-            chat = chat,
+            allAccounts = accounts,
+            chat = chatSummary,
             contact = contact,
             group = group,
             groupMembers = members,
-            messages = repository.database.getConversationMessages(accountId, chatJid)
+            messages = msgs,
+            inChatSearchQuery = searchQuery,
+            inChatSearchResults = searchHits,
+            forwardCandidateChats = forwardChats,
+            canLoadOlder = msgs.size >= limit
         )
     }
         .flowOn(Dispatchers.IO)
@@ -94,15 +121,23 @@ class ConversationViewModel(
         repository.setActiveConversation(accountId, chatJid)
         viewModelScope.launch {
             repository.openAndMarkConversationRead(accountId, chatJid)
-            if (chatJid.endsWith("@g.us")) {
+            if (IdentityResolver.isGroupJid(chatJid)) {
                 repository.refreshSingleGroupDetails(accountId, chatJid)
             }
         }
     }
 
     override fun onCleared() {
-        repository.setActiveConversation(null, null)
         super.onCleared()
+        repository.setActiveConversation(null, null)
+    }
+
+    fun loadOlderMessages() {
+        _windowLimit.value = (_windowLimit.value + 300).coerceAtMost(3000)
+    }
+
+    fun setInChatSearchQuery(query: String) {
+        _inChatSearchQuery.value = query
     }
 
     fun setReplyTarget(msg: MessageRecord?) {
@@ -114,73 +149,103 @@ class ConversationViewModel(
     }
 
     fun onComposerTextChanged(text: String) {
-        typingStopJob?.cancel()
-        if (text.isBlank()) {
-            viewModelScope.launch { repository.sendTypingState(accountId, chatJid, false) }
-            return
-        }
-        viewModelScope.launch { repository.sendTypingState(accountId, chatJid, true) }
-        typingStopJob = viewModelScope.launch {
-            delay(3_500L)
-            repository.sendTypingState(accountId, chatJid, false)
-        }
-    }
-
-    fun sendText(text: String, onSuccess: () -> Unit) {
-        val clean = text.trim()
-        if (clean.isEmpty() || _isSending.value) return
-        val quote = _replyTarget.value
-        viewModelScope.launch {
-            _isSending.value = true
-            try {
-                typingStopJob?.cancel()
-                repository.sendTypingState(accountId, chatJid, false)
-                val res = repository.sendTextMessage(
-                    accountId = accountId,
-                    chatJid = chatJid,
-                    text = clean,
-                    quotedMessageId = quote?.messageId.orEmpty(),
-                    quotedSenderJid = quote?.senderJid.orEmpty(),
-                    quotedText = quote?.textBody.orEmpty()
-                )
-                if (res.ok) {
-                    _replyTarget.value = null
-                    onSuccess()
-                } else {
-                    _errorBanner.value = res.error.ifBlank { "Failed to send message via Account $accountId" }
-                }
-            } finally {
-                _isSending.value = false
+        typingResetJob?.cancel()
+        if (text.isNotBlank()) {
+            viewModelScope.launch {
+                repository.sendTypingState(accountId, chatJid, isTyping = true)
+            }
+            typingResetJob = viewModelScope.launch {
+                delay(3_000L)
+                repository.sendTypingState(accountId, chatJid, isTyping = false)
             }
         }
     }
 
-    fun sendUriAttachment(context: Context, uri: Uri, forcedMediaType: String, caption: String = "") {
+    /**
+     * Durable outgoing text send:
+     *  - Clears composer ONLY inside [onPendingPersisted] after local SQLite commit succeeds.
+     *  - Underlying repository send runs on NonCancellable IO scope so navigating Back never loses the message.
+     */
+    fun sendText(text: String, onClearedComposer: () -> Unit) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val quoted = _replyTarget.value
+        val activeTargetJid = uiState.value.chatJid.ifBlank { chatJid }
+
+        viewModelScope.launch {
+            _errorBanner.value = null
+            val res = repository.sendTextMessage(
+                accountId = accountId,
+                chatJid = activeTargetJid,
+                text = trimmed,
+                quotedMessageId = quoted?.messageId.orEmpty(),
+                quotedSenderJid = quoted?.senderJid.orEmpty(),
+                quotedText = quoted?.textBody.orEmpty(),
+                onPendingPersisted = {
+                    // Composer clears immediately once Pending row is durably stored in SQLite!
+                    _replyTarget.value = null
+                    onClearedComposer()
+                }
+            )
+            if (!res.ok) {
+                _errorBanner.value = res.error.ifBlank { "Failed to send via Account $accountId — tap Retry on the message" }
+            }
+        }
+    }
+
+    fun retryMessage(msg: MessageRecord) {
+        viewModelScope.launch {
+            _errorBanner.value = null
+            val res = repository.retryFailedMessage(accountId, msg.chatJid, msg.messageId)
+            if (!res.ok) {
+                _errorBanner.value = res.error.ifBlank { "Retry failed on Account $accountId" }
+            }
+        }
+    }
+
+    fun forwardMessage(msg: MessageRecord, targetAccountId: Int, targetChatJid: String) {
+        viewModelScope.launch {
+            val res = repository.forwardMessage(msg, targetAccountId, targetChatJid)
+            if (!res.ok) {
+                _errorBanner.value = res.error.ifBlank { "Forward failed" }
+            }
+        }
+    }
+
+    fun sendUriAttachment(
+        context: Context,
+        uri: Uri,
+        mediaType: String,
+        caption: String,
+        onPersisted: () -> Unit = {}
+    ) {
+        val quoted = _replyTarget.value
+        val activeTargetJid = uiState.value.chatJid.ifBlank { chatJid }
         viewModelScope.launch {
             _isSending.value = true
+            _errorBanner.value = null
             try {
-                val (tempFile, mimeType) = copyUriToTempFile(context, uri)
-                if (tempFile == null) {
-                    _errorBanner.value = "Unable to read selected attachment"
-                    return@launch
-                }
-                val quote = _replyTarget.value
+                val (stagedFile, resolvedMime) = stageContentUriToAccountDir(context, uri)
                 val res = repository.sendMediaMessage(
                     accountId = accountId,
-                    chatJid = chatJid,
-                    mediaType = forcedMediaType,
-                    localFile = tempFile,
-                    mimeType = mimeType,
+                    chatJid = activeTargetJid,
+                    mediaType = mediaType,
+                    localFile = stagedFile,
+                    mimeType = resolvedMime,
                     caption = caption,
-                    quotedMessageId = quote?.messageId.orEmpty(),
-                    quotedSenderJid = quote?.senderJid.orEmpty(),
-                    quotedText = quote?.textBody.orEmpty()
+                    quotedMessageId = quoted?.messageId.orEmpty(),
+                    quotedSenderJid = quoted?.senderJid.orEmpty(),
+                    quotedText = quoted?.textBody.orEmpty(),
+                    onPendingPersisted = {
+                        _replyTarget.value = null
+                        onPersisted()
+                    }
                 )
-                if (res.ok) {
-                    _replyTarget.value = null
-                } else {
-                    _errorBanner.value = res.error.ifBlank { "Media upload failed on Account $accountId" }
+                if (!res.ok) {
+                    _errorBanner.value = res.error.ifBlank { "Media send failed on Account $accountId" }
                 }
+            } catch (e: Exception) {
+                _errorBanner.value = e.message ?: "Attachment error"
             } finally {
                 _isSending.value = false
             }
@@ -188,24 +253,20 @@ class ConversationViewModel(
     }
 
     fun sendRecordedVoiceNote(audioFile: File, durationSec: Int) {
+        val activeTargetJid = uiState.value.chatJid.ifBlank { chatJid }
         viewModelScope.launch {
             _isSending.value = true
+            _errorBanner.value = null
             try {
-                val quote = _replyTarget.value
                 val res = repository.sendMediaMessage(
                     accountId = accountId,
-                    chatJid = chatJid,
+                    chatJid = activeTargetJid,
                     mediaType = "voice",
                     localFile = audioFile,
                     mimeType = "audio/mp4",
-                    durationSec = durationSec,
-                    quotedMessageId = quote?.messageId.orEmpty(),
-                    quotedSenderJid = quote?.senderJid.orEmpty(),
-                    quotedText = quote?.textBody.orEmpty()
+                    durationSec = durationSec
                 )
-                if (res.ok) {
-                    _replyTarget.value = null
-                } else {
+                if (!res.ok) {
                     _errorBanner.value = res.error.ifBlank { "Voice note send failed" }
                 }
             } finally {
@@ -214,63 +275,64 @@ class ConversationViewModel(
         }
     }
 
-    fun reactToMessage(msg: MessageRecord, emoji: String) {
+    fun reactToMessage(target: MessageRecord, emoji: String) {
         viewModelScope.launch {
-            val res = repository.sendReaction(
+            repository.sendReaction(
                 accountId = accountId,
-                chatJid = chatJid,
-                senderJid = msg.senderJid,
-                targetMessageId = msg.messageId,
+                chatJid = target.chatJid,
+                senderJid = target.senderJid,
+                targetMessageId = target.messageId,
                 emoji = emoji
             )
+        }
+    }
+
+    fun deleteForEveryone(target: MessageRecord) {
+        viewModelScope.launch {
+            val res = repository.deleteMessageForEveryone(
+                accountId = accountId,
+                chatJid = target.chatJid,
+                senderJid = target.senderJid,
+                targetMessageId = target.messageId
+            )
             if (!res.ok) {
-                _errorBanner.value = res.error.ifBlank { "Reaction failed" }
+                _errorBanner.value = res.error.ifBlank { "Delete for everyone failed" }
             }
         }
     }
 
-    fun deleteForEveryone(msg: MessageRecord) {
-        viewModelScope.launch {
-            val res = repository.deleteMessageForEveryone(
-                accountId = accountId,
-                chatJid = chatJid,
-                senderJid = msg.senderJid,
-                targetMessageId = msg.messageId
-            )
-            if (!res.ok) {
-                _errorBanner.value = res.error.ifBlank { "Delete failed" }
-            }
+    fun deleteForMe(target: MessageRecord) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteMessageForMe(accountId, target.chatJid, target.messageId)
         }
     }
 
     fun downloadMedia(msg: MessageRecord) {
         viewModelScope.launch {
             val res = repository.downloadMessageMedia(accountId, msg)
-            if (!res.ok && res.error.isNotBlank()) {
-                _errorBanner.value = res.error
+            if (!res.ok) {
+                _errorBanner.value = res.error.ifBlank { "Media download failed" }
             }
         }
     }
 
-    private suspend fun copyUriToTempFile(context: Context, uri: Uri): Pair<File?, String> =
+    private suspend fun stageContentUriToAccountDir(context: Context, uri: Uri): Pair<File, String> =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val cr = context.contentResolver
-                val mime = cr.getType(uri) ?: "application/octet-stream"
-                var displayName = "attachment_${System.currentTimeMillis()}"
-                cr.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                    if (c.moveToFirst()) {
-                        val name = c.getString(0)
-                        if (!name.isNullOrBlank()) displayName = name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                    }
+            val resolver = context.contentResolver
+            val mime = resolver.getType(uri) ?: "application/octet-stream"
+            var displayName = "attachment_${System.currentTimeMillis()}"
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val raw = c.getString(0)
+                    if (!raw.isNullOrBlank()) displayName = raw.replace(Regex("[^A-Za-z0-9._-]"), "_")
                 }
-                val outDir = File(context.filesDir, "media/account_$accountId/outgoing").apply { mkdirs() }
-                val dest = File(outDir, "${System.currentTimeMillis()}_$displayName")
-                cr.openInputStream(uri)?.use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
-                } ?: return@withContext (null to mime)
-                dest to mime
-            }.getOrElse { null to "application/octet-stream" }
+            }
+            val dir = File(context.filesDir, "media/account_$accountId/outgoing").apply { mkdirs() }
+            val outFile = File(dir, "${System.currentTimeMillis()}_$displayName")
+            resolver.openInputStream(uri)?.use { input ->
+                outFile.outputStream().use { output -> input.copyTo(output) }
+            } ?: error("Unable to read selected attachment")
+            outFile to mime
         }
 
     class Factory(

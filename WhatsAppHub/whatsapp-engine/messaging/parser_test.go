@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"strings"
 	"testing"
 
 	"go.mau.fi/whatsmeow/proto/waCommon"
@@ -30,6 +31,57 @@ func TestParseTextAndQuotedReply(t *testing.T) {
 	}
 	if parsed.QuotedMessageID != "ORIG_MSG_1" || parsed.QuotedText != "Original quoted text" {
 		t.Fatalf("unexpected quote extraction: %+v", parsed)
+	}
+}
+
+func TestParseDeviceSentEditedLocationContactAndPoll(t *testing.T) {
+	// 1. Primary phone self-sent message wrapped in DeviceSentMessage
+	devSent := ParseE2EMessage(&waE2E.Message{
+		DeviceSentMessage: &waE2E.DeviceSentMessage{
+			DestinationJID: proto.String("967771234567@s.whatsapp.net"),
+			Message: &waE2E.Message{
+				Conversation: proto.String("Sent from primary WhatsApp phone"),
+			},
+		},
+	})
+	if devSent.Kind != KindMessage || devSent.Text != "Sent from primary WhatsApp phone" {
+		t.Fatalf("DeviceSentMessage unwrap failed: %+v", devSent)
+	}
+
+	// 2. Location message
+	loc := ParseE2EMessage(&waE2E.Message{
+		LocationMessage: &waE2E.LocationMessage{
+			DegreesLatitude:  proto.Float64(13.96667),
+			DegreesLongitude: proto.Float64(44.18333),
+			Name:             proto.String("Ibb City Center"),
+		},
+	})
+	if loc.Kind != KindMessage || !strings.Contains(loc.Text, "Ibb City Center") {
+		t.Fatalf("Location parse failed: %+v", loc)
+	}
+
+	// 3. Contact message
+	ct := ParseE2EMessage(&waE2E.Message{
+		ContactMessage: &waE2E.ContactMessage{
+			DisplayName: proto.String("Rafat Al-Majidi"),
+		},
+	})
+	if ct.Kind != KindMessage || !strings.Contains(ct.Text, "Rafat Al-Majidi") {
+		t.Fatalf("Contact parse failed: %+v", ct)
+	}
+
+	// 4. Poll message
+	poll := ParseE2EMessage(&waE2E.Message{
+		PollCreationMessage: &waE2E.PollCreationMessage{
+			Name: proto.String("Release Schedule"),
+			Options: []*waE2E.PollCreationMessage_Option{
+				{OptionName: proto.String("Today")},
+				{OptionName: proto.String("Tomorrow")},
+			},
+		},
+	})
+	if poll.Kind != KindMessage || !strings.Contains(poll.Text, "Release Schedule") || !strings.Contains(poll.Text, "Today") {
+		t.Fatalf("Poll parse failed: %+v", poll)
 	}
 }
 

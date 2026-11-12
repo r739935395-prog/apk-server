@@ -1,6 +1,7 @@
 package synchronization
 
 import (
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -12,12 +13,17 @@ import (
 	"whatshub/messaging"
 )
 
+// LIDMappingSink allows SessionManager to persist newly discovered verified (LID, PN) pairs
+// into whatsmeow's per-account LIDStore when HistorySync provides both conv.GetLidJID() and conv.GetPnJID().
+type LIDMappingSink func(lidJID, pnJID string)
+
 // Processor handles HistorySync payloads for ONE isolated WhatsApp account.
 // Each account slot owns a separate Processor instance so sync state and
 // deduplication caches are never shared across accounts.
 type Processor struct {
 	accountID int
 	router    *events.Router
+	lidSink   LIDMappingSink
 
 	mu            sync.Mutex
 	seenComposite map[string]struct{}
@@ -36,7 +42,25 @@ func NewProcessor(accountID int, router *events.Router) *Processor {
 	}
 }
 
-// ProcessSyncData imports conversations, messages, and pushnames from a HistorySync payload.
+// SetLIDMappingSink attaches an optional per-account sink for verified LID<->PN pairs.
+func (p *Processor) SetLIDMappingSink(sink LIDMappingSink) {
+	p.mu.Lock()
+	p.lidSink = sink
+	p.mu.Unlock()
+}
+
+func normalizeNonADJID(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if parsed, err := types.ParseJID(trimmed); err == nil {
+		return parsed.ToNonAD().String()
+	}
+	return trimmed
+}
+
+// ProcessSyncData imports conversations, messages, verified LID/PN identity pairs, and pushnames from a HistorySync payload.
 func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedChats int, importedMessages int) {
 	if data == nil || !events.ValidAccountID(p.accountID) || p.router == nil {
 		return 0, 0
@@ -53,24 +77,28 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 		return 0, 0
 	}
 	p.seenChunks[chunkKey] = struct{}{}
+	lidSink := p.lidSink
 	p.mu.Unlock()
 
 	// 1. Import pushnames into account-scoped contacts batch
 	if pushnames := data.GetPushnames(); len(pushnames) > 0 {
 		batch := make([]events.ContactDTO, 0, len(pushnames))
 		for _, pn := range pushnames {
-			rawJID := strings.TrimSpace(pn.GetID())
+			rawJID := normalizeNonADJID(pn.GetID())
 			name := strings.TrimSpace(pn.GetPushname())
 			if rawJID == "" || name == "" {
 				continue
 			}
-			if parsed, err := types.ParseJID(rawJID); err == nil {
-				rawJID = parsed.ToNonAD().String()
-			}
-			batch = append(batch, events.ContactDTO{
+			dto := events.ContactDTO{
 				JID:      rawJID,
 				PushName: name,
-			})
+			}
+			if strings.HasSuffix(rawJID, "@lid") {
+				dto.LidJID = rawJID
+			} else if strings.HasSuffix(rawJID, "@s.whatsapp.net") {
+				dto.PnJID = rawJID
+			}
+			batch = append(batch, dto)
 		}
 		if len(batch) > 0 {
 			p.router.Emit(events.Envelope{
@@ -83,16 +111,47 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 
 	// 2. Process conversations and their messages in chronological order
 	for _, conv := range data.GetConversations() {
-		rawChatJID := strings.TrimSpace(conv.GetID())
-		if rawChatJID == "" || rawChatJID == "status@broadcast" {
+		rawConvID := strings.TrimSpace(conv.GetID())
+		if rawConvID == "" || rawConvID == "status@broadcast" || strings.HasSuffix(rawConvID, "@broadcast") {
 			continue
 		}
-		chatJID := rawChatJID
-		isGroup := strings.HasSuffix(chatJID, "@g.us")
-		if parsed, err := types.ParseJID(rawChatJID); err == nil {
-			chatJID = parsed.ToNonAD().String()
+		rawChatJID := normalizeNonADJID(rawConvID)
+		isGroup := strings.HasSuffix(rawChatJID, "@g.us")
+		if parsed, err := types.ParseJID(rawConvID); err == nil {
 			isGroup = parsed.Server == types.GroupServer
 		}
+
+		// Extract verified LID <-> PN pair from HistorySync conversation metadata (strictly per account)
+		lidJID := normalizeNonADJID(conv.GetLidJID())
+		pnJID := normalizeNonADJID(conv.GetPnJID())
+		if !isGroup {
+			if strings.HasSuffix(rawChatJID, "@lid") && lidJID == "" {
+				lidJID = rawChatJID
+			}
+			if strings.HasSuffix(rawChatJID, "@s.whatsapp.net") && pnJID == "" {
+				pnJID = rawChatJID
+			}
+		}
+
+		canonicalChatJID := rawChatJID
+		if !isGroup && lidJID != "" && pnJID != "" &&
+			strings.HasSuffix(lidJID, "@lid") && strings.HasSuffix(pnJID, "@s.whatsapp.net") {
+			// Canonicalize 1:1 chats to the verified phone JID while preserving raw & LID JIDs
+			canonicalChatJID = pnJID
+			if lidSink != nil {
+				lidSink(lidJID, pnJID)
+			}
+			p.router.Emit(events.Envelope{
+				Type:          events.EventIdentityMapping,
+				AccountID:     p.accountID,
+				ChatJID:       canonicalChatJID,
+				RawChatJID:    rawChatJID,
+				LidJID:        lidJID,
+				PnJID:         pnJID,
+				MappingSource: "history_sync",
+			})
+		}
+
 		chatName := strings.TrimSpace(conv.GetName())
 		unreadCount := int(conv.GetUnreadCount())
 
@@ -118,7 +177,7 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 				continue
 			}
 
-			compMsgKey := events.CompositeMessageKey(p.accountID, chatJID, msgID)
+			compMsgKey := events.CompositeMessageKey(p.accountID, canonicalChatJID, msgID)
 			p.mu.Lock()
 			if _, exists := p.seenComposite[compMsgKey]; exists {
 				p.mu.Unlock()
@@ -128,7 +187,7 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 			p.mu.Unlock()
 
 			parsed := messaging.ParseE2EMessage(webMsg.GetMessage())
-			if parsed.Kind != messaging.KindMessage {
+			if parsed.Kind != messaging.KindMessage && parsed.Kind != messaging.KindEdit {
 				continue
 			}
 
@@ -139,20 +198,12 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 			tsMs := tsSec * 1000
 
 			isFromMe := webMsg.GetKey().GetFromMe()
-			senderJID := chatJID
+			senderJID := canonicalChatJID
 			if isGroup {
-				if part := strings.TrimSpace(webMsg.GetParticipant()); part != "" {
-					if pJID, err := types.ParseJID(part); err == nil {
-						senderJID = pJID.ToNonAD().String()
-					} else {
-						senderJID = part
-					}
-				} else if kp := strings.TrimSpace(webMsg.GetKey().GetParticipant()); kp != "" {
-					if pJID, err := types.ParseJID(kp); err == nil {
-						senderJID = pJID.ToNonAD().String()
-					} else {
-						senderJID = kp
-					}
+				if part := normalizeNonADJID(webMsg.GetParticipant()); part != "" {
+					senderJID = part
+				} else if kp := normalizeNonADJID(webMsg.GetKey().GetParticipant()); kp != "" {
+					senderJID = kp
 				}
 			}
 
@@ -167,10 +218,13 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 				env: events.Envelope{
 					Type:             events.EventMessage,
 					AccountID:        p.accountID,
-					ChatJID:          chatJID,
+					ChatJID:          canonicalChatJID,
+					RawChatJID:       rawChatJID,
+					LidJID:           lidJID,
+					PnJID:            pnJID,
 					ChatName:         chatName,
 					MessageID:        msgID,
-					CompositeChatKey: events.CompositeChatKey(p.accountID, chatJID),
+					CompositeChatKey: events.CompositeChatKey(p.accountID, canonicalChatJID),
 					CompositeMsgKey:  compMsgKey,
 					SenderJID:        senderJID,
 					SenderName:       strings.TrimSpace(webMsg.GetPushName()),
@@ -190,6 +244,7 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 					QuotedMessageID:  parsed.QuotedMessageID,
 					QuotedSenderJID:  parsed.QuotedSenderJID,
 					QuotedText:       parsed.QuotedText,
+					EditTargetID:     parsed.TargetMessageID,
 					IsHistorySync:    true,
 					UnreadCount:      unreadCount,
 					Status:           status,
@@ -211,12 +266,14 @@ func (p *Processor) ProcessSyncData(data *waHistorySync.HistorySync) (importedCh
 
 		importedChats++
 		for idx := range items {
-			// Only attach conversation unread count to the newest imported message of the conversation
 			if idx < len(items)-1 {
 				items[idx].env.UnreadCount = 0
 			}
 			p.router.Emit(items[idx].env)
 			importedMessages++
+			if importedMessages%200 == 0 {
+				runtime.Gosched()
+			}
 		}
 	}
 

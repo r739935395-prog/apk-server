@@ -5,101 +5,158 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
 import com.rafat.whatshub.MainActivity
 import com.rafat.whatshub.R
 import com.rafat.whatshub.WhatsAppHubApp
-import com.rafat.whatshub.database.AccountPalette
 import com.rafat.whatshub.database.AccountStatus
 import com.rafat.whatshub.repository.IncomingMessageAlert
 import com.rafat.whatshub.security.SanitizedLogger
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-class WhatsAppHubService : Service() {
-
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var connectivityMonitor: ConnectivityMonitor? = null
+/**
+ * Persistent foreground service keeping up to 4 independent WhatsApp WebSocket sessions active
+ * on Android 14 / 15 (Samsung One UI 7) and surfacing account-badged incoming notifications.
+ */
+class WhatsAppHubService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannels()
+        promoteToForeground(connectedCount = 0)
+
         val app = application as WhatsAppHubApp
         val repo = app.repository
 
-        startForegroundSafely(buildPersistentNotification(0))
+        lifecycleScope.launch {
+            repo.initializeEngineAndRestoreSessions()
+        }
 
-        repo.initializeEngineAndRestoreSessions()
-        connectivityMonitor = ConnectivityMonitor(this, repo).also { it.start() }
-
-        serviceScope.launch {
-            repo.accounts.collect { list ->
-                val connectedCount = list.count { it.status == AccountStatus.CONNECTED }
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.notify(FGS_NOTIFICATION_ID, buildPersistentNotification(connectedCount))
+        lifecycleScope.launch {
+            repo.accounts.collect { accounts ->
+                val connected = accounts.count { it.status == AccountStatus.CONNECTED }
+                updateForegroundSummary(connected)
             }
         }
 
-        serviceScope.launch {
+        lifecycleScope.launch {
             repo.incomingAlerts.collect { alert ->
-                postIncomingMessageNotification(alert)
+                postMessageNotification(alert)
             }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP_SERVICE) {
-            SanitizedLogger.info("Service", "User requested background service stop")
-            val app = application as WhatsAppHubApp
-            serviceScope.launch(Dispatchers.IO) {
-                for (acct in 1..4) {
-                    app.repository.disconnectAccount(acct)
-                }
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
-            return START_NOT_STICKY
-        }
+        super.onStartCommand(intent, flags, startId)
+        val connected = (application as WhatsAppHubApp).repository.accounts.value
+            .count { it.status == AccountStatus.CONNECTED }
+        promoteToForeground(connected)
         return START_STICKY
     }
 
-    override fun onDestroy() {
-        connectivityMonitor?.stop()
-        serviceScope.cancel()
-        super.onDestroy()
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun startForegroundSafely(notification: Notification) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+    private fun promoteToForeground(connectedCount: Int) {
+        val notification = buildForegroundNotification(connectedCount)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     FGS_NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 )
             } else {
                 startForeground(FGS_NOTIFICATION_ID, notification)
             }
-        } catch (t: Throwable) {
-            SanitizedLogger.error("Service", "Foreground start restricted by OS: ${t.javaClass.simpleName}")
+        }.onFailure { err ->
+            SanitizedLogger.warn("FGS", "Foreground promotion deferred: ${err.javaClass.simpleName}")
         }
     }
 
+    private fun updateForegroundSummary(connectedCount: Int) {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        nm.notify(FGS_NOTIFICATION_ID, buildForegroundNotification(connectedCount))
+    }
+
+    private fun buildForegroundNotification(connectedCount: Int): Notification {
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pi = PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_FGS)
+            .setSmallIcon(R.drawable.ic_notification_hub)
+            .setContentTitle(getString(R.string.fgs_notification_title))
+            .setContentText(getString(R.string.fgs_notification_body, connectedCount))
+            .setOngoing(true)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(pi)
+            .build()
+    }
+
+    private fun postMessageNotification(alert: IncomingMessageAlert) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        // Stable per-(accountId, canonicalChatJid) notification ID prevents duplicate stacking
+        val notifId = 20_000 + ((alert.accountId * 31 + alert.chatJid.hashCode()) and 0x0FFFFFFF)
+        val deepLinkIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(MainActivity.EXTRA_ACCOUNT_ID, alert.accountId)
+            putExtra(MainActivity.EXTRA_CHAT_JID, alert.chatJid)
+        }
+        val pi = PendingIntent.getActivity(
+            this,
+            notifId,
+            deepLinkIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val accountColorArgb = when (alert.accountId) {
+            1 -> 0xFF10B981.toInt()
+            2 -> 0xFF3B82F6.toInt()
+            3 -> 0xFF8B5CF6.toInt()
+            4 -> 0xFFF59E0B.toInt()
+            else -> 0xFF14B8A6.toInt()
+        }
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification_hub)
+            .setColor(accountColorArgb)
+            .setSubText(alert.accountLabel)
+            .setContentTitle(alert.chatTitle)
+            .setContentText(alert.previewText)
+            .setGroup("rafat_hub_acct_${alert.accountId}")
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setContentIntent(pi)
+            .build()
+
+        NotificationManagerCompat.from(this).notify(notifId, notification)
+    }
+
     private fun ensureNotificationChannels() {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val nm = getSystemService(NotificationManager::class.java) ?: return
         val fgsChannel = NotificationChannel(
             CHANNEL_FGS,
             getString(R.string.fgs_channel_name),
@@ -116,88 +173,17 @@ class WhatsAppHubService : Service() {
         nm.createNotificationChannel(msgChannel)
     }
 
-    private fun buildPersistentNotification(connectedCount: Int): Notification {
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val openPending = PendingIntent.getActivity(
-            this,
-            100,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val stopIntent = Intent(this, WhatsAppHubService::class.java).apply {
-            action = ACTION_STOP_SERVICE
-        }
-        val stopPending = PendingIntent.getService(
-            this,
-            101,
-            stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(this, CHANNEL_FGS)
-            .setSmallIcon(R.drawable.ic_notification_hub)
-            .setContentTitle(getString(R.string.fgs_notification_title))
-            .setContentText(getString(R.string.fgs_notification_body, connectedCount))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(openPending)
-            .addAction(0, getString(R.string.btn_disconnect), stopPending)
-            .build()
-    }
-
-    private fun postIncomingMessageNotification(alert: IncomingMessageAlert) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-            if (!granted) return
-        }
-
-        val launchIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(EXTRA_OPEN_ACCOUNT_ID, alert.accountId)
-            putExtra(EXTRA_OPEN_CHAT_JID, alert.chatJid)
-        }
-        val reqCode = ("${alert.accountId}:${alert.chatJid}").hashCode()
-        val pending = PendingIntent.getActivity(
-            this,
-            reqCode,
-            launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val colorInt = (AccountPalette.colorHexFor(alert.accountId) and 0xFFFFFFFFL).toInt()
-        val notif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
-            .setSmallIcon(R.drawable.ic_notification_hub)
-            .setColor(colorInt)
-            .setSubText(alert.accountLabel)
-            .setContentTitle("${alert.chatTitle} • ${alert.accountLabel}")
-            .setContentText(alert.previewText)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(pending)
-            .build()
-
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(2000 + (reqCode and 0x7FFF), notif)
-    }
-
     companion object {
-        const val CHANNEL_FGS = "whatshub_fgs_status"
+        const val CHANNEL_FGS = "whatshub_active_connections"
         const val CHANNEL_MESSAGES = "whatshub_incoming_messages"
-        const val FGS_NOTIFICATION_ID = 1001
-        const val ACTION_STOP_SERVICE = "com.rafat.whatshub.STOP_SERVICE"
-        const val EXTRA_OPEN_ACCOUNT_ID = "open_account_id"
-        const val EXTRA_OPEN_CHAT_JID = "open_chat_jid"
+        private const val FGS_NOTIFICATION_ID = 1001
 
         fun start(context: Context) {
-            val intent = Intent(context, WhatsAppHubService::class.java)
-            try {
+            runCatching {
+                val intent = Intent(context, WhatsAppHubService::class.java)
                 ContextCompat.startForegroundService(context, intent)
-            } catch (t: Throwable) {
-                SanitizedLogger.warn("Service", "Unable to start foreground service from background: ${t.javaClass.simpleName}")
+            }.onFailure {
+                SanitizedLogger.warn("FGS", "Service start deferred by OS background policy")
             }
         }
     }

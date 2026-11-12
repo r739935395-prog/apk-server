@@ -8,7 +8,7 @@ import (
 	"whatshub/session"
 )
 
-func TestBridgeLifecycleAndFourAccountSnapshots(t *testing.T) {
+func TestBridgeLifecyclePeekAckAndFourAccountSnapshots(t *testing.T) {
 	b := NewBridge()
 	tmp := t.TempDir()
 
@@ -19,14 +19,12 @@ func TestBridgeLifecycleAndFourAccountSnapshots(t *testing.T) {
 	}
 	defer b.Shutdown()
 
-	// Invalid key length must fail cleanly
 	badKeyRes := b.SetSlotKey(1, "1234")
 	_ = json.Unmarshal([]byte(badKeyRes), &env)
 	if env.OK {
 		t.Fatal("expected short key to be rejected")
 	}
 
-	// Valid 32-byte keys for all 4 accounts succeed
 	for acct := 1; acct <= 4; acct++ {
 		keyHex := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 		res := b.SetSlotKey(acct, keyHex)
@@ -36,7 +34,6 @@ func TestBridgeLifecycleAndFourAccountSnapshots(t *testing.T) {
 		}
 	}
 
-	// Out-of-range Account 5 must be rejected
 	outOfRange := b.ConnectAccount(5)
 	_ = json.Unmarshal([]byte(outOfRange), &env)
 	if env.OK {
@@ -47,5 +44,14 @@ func TestBridgeLifecycleAndFourAccountSnapshots(t *testing.T) {
 	var snaps []session.SlotSnapshot
 	if err := json.Unmarshal([]byte(snapJSON), &snaps); err != nil || len(snaps) != 4 {
 		t.Fatalf("expected 4 account snapshots, got %s (%v)", snapJSON, err)
+	}
+
+	if peeked := b.PeekEvents(16); peeked == "" {
+		t.Fatal("expected valid JSON array from PeekEvents")
+	}
+	ackRes := b.AckEvents(0)
+	_ = json.Unmarshal([]byte(ackRes), &env)
+	if !env.OK {
+		t.Fatalf("AckEvents(0) failed: %s", ackRes)
 	}
 }

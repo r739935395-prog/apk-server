@@ -43,7 +43,6 @@ func buildSampleHistoryPayload() *waHistorySync.HistorySync {
 							Message:          &waE2E.Message{Conversation: proto.String("First message")},
 						},
 					},
-					// Duplicate message ID inside the same conversation
 					{
 						MsgOrderID: proto.Uint64(3),
 						Message: &waWeb.WebMessageInfo{
@@ -70,13 +69,11 @@ func TestHistorySyncDeduplicationOrderingAndAccountIsolation(t *testing.T) {
 		t.Fatalf("account 1 expected 1 chat & 2 deduplicated msgs, got %d chats & %d msgs", chats1, msgs1)
 	}
 
-	// Re-delivering identical chunk 1 to account 1 must be ignored
 	dupChats, dupMsgs := proc1.ProcessSyncData(payload)
 	if dupChats != 0 || dupMsgs != 0 {
 		t.Fatalf("expected duplicate chunk to import 0 items, got %d/%d", dupChats, dupMsgs)
 	}
 
-	// Delivering identical chat/message IDs to Account 2 MUST succeed independently
 	chats2, msgs2 := proc2.ProcessSyncData(payload)
 	if chats2 != 1 || msgs2 != 2 {
 		t.Fatalf("account 2 expected independent import of 1 chat & 2 msgs, got %d/%d", chats2, msgs2)
@@ -102,5 +99,68 @@ func TestHistorySyncDeduplicationOrderingAndAccountIsolation(t *testing.T) {
 	}
 	if acct1Msgs[0].CompositeMsgKey == acct2Msgs[0].CompositeMsgKey {
 		t.Fatalf("composite message keys collided across accounts: %s", acct1Msgs[0].CompositeMsgKey)
+	}
+}
+
+func TestHistorySyncLIDToPNCanonicalResolution(t *testing.T) {
+	router := events.NewRouter(64)
+	proc := NewProcessor(1, router)
+	var sinkLid, sinkPn string
+	proc.SetLIDMappingSink(func(lidJID, pnJID string) {
+		sinkLid = lidJID
+		sinkPn = pnJID
+	})
+
+	syncType := waHistorySync.HistorySync_RECENT
+	payload := &waHistorySync.HistorySync{
+		SyncType:   &syncType,
+		ChunkOrder: proto.Uint32(1),
+		Progress:   proto.Uint32(100),
+		Conversations: []*waHistorySync.Conversation{
+			{
+				ID:     proto.String("1849204819204@lid"),
+				LidJID: proto.String("1849204819204@lid"),
+				PnJID:  proto.String("967771234567@s.whatsapp.net"),
+				Name:   proto.String("Khalid"),
+				Messages: []*waHistorySync.HistorySyncMsg{
+					{
+						MsgOrderID: proto.Uint64(1),
+						Message: &waWeb.WebMessageInfo{
+							Key:              &waCommon.MessageKey{ID: proto.String("LID_MSG_1"), FromMe: proto.Bool(false)},
+							MessageTimestamp: proto.Uint64(1700000500),
+							Message:          &waE2E.Message{Conversation: proto.String("Hello via LID")},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	chats, msgs := proc.ProcessSyncData(payload)
+	if chats != 1 || msgs != 1 {
+		t.Fatalf("expected 1 chat and 1 msg, got %d/%d", chats, msgs)
+	}
+	if sinkLid != "1849204819204@lid" || sinkPn != "967771234567@s.whatsapp.net" {
+		t.Fatalf("LID sink not invoked properly: lid=%s pn=%s", sinkLid, sinkPn)
+	}
+
+	polled := router.Poll(16)
+	var foundMapping, foundMsg bool
+	for _, ev := range polled {
+		if ev.Type == events.EventIdentityMapping {
+			foundMapping = true
+			if ev.LidJID != "1849204819204@lid" || ev.PnJID != "967771234567@s.whatsapp.net" {
+				t.Fatalf("unexpected mapping event: %+v", ev)
+			}
+		}
+		if ev.Type == events.EventMessage {
+			foundMsg = true
+			if ev.ChatJID != "967771234567@s.whatsapp.net" || ev.RawChatJID != "1849204819204@lid" {
+				t.Fatalf("expected canonical PN chatJID with preserved RawChatJID, got %+v", ev)
+			}
+		}
+	}
+	if !foundMapping || !foundMsg {
+		t.Fatalf("missing mapping (%v) or message (%v)", foundMapping, foundMsg)
 	}
 }

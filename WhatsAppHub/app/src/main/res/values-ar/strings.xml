@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">واتساب هَب</string>
+    <string name="app_name">رافت هب</string>
+    <string name="brand_full_title">رافت واتساب هب</string>
+    <string name="brand_subtitle">منصة واتساب متعددة الحسابات</string>
 
     <!-- Navigation -->
     <string name="nav_inbox">البريد الموحد</string>
@@ -10,16 +12,25 @@
     <string name="nav_settings">الإعدادات</string>
 
     <!-- Inbox -->
-    <string name="inbox_title">واتساب هَب</string>
-    <string name="search_placeholder">ابحث في المحادثات أو جهات الاتصال أو الرسائل…</string>
+    <string name="inbox_title">رافت هب</string>
+    <string name="search_placeholder">ابحث في المحادثات أو جهات الاتصال أو نص الرسائل…</string>
     <string name="filter_all">الكل</string>
     <string name="filter_unread">غير المقروءة</string>
     <string name="filter_groups">المجموعات</string>
     <string name="filter_direct">الفردية</string>
+    <string name="filter_archived">المؤرشفة</string>
     <string name="empty_inbox_title">لا توجد محادثات حتى الآن</string>
-    <string name="empty_inbox_subtitle">اربط ما يصل إلى ٤ حسابات واتساب مستقلة من تبويب الحسابات لعرض وإرسال الرسائل في صندوق وارد موحد.</string>
+    <string name="empty_inbox_subtitle">اربط ما يصل إلى ٤ حسابات واتساب مستقلة من تبويب الحسابات لعرض وإرسال الرسائل في منصة موحدة.</string>
     <string name="manage_accounts_cta">إدارة الحسابات</string>
     <string name="new_chat">محادثة جديدة</string>
+    <string name="chat_action_pin">تثبيت المحادثة</string>
+    <string name="chat_action_unpin">إلغاء التثبيت</string>
+    <string name="chat_action_archive">أرشفة المحادثة</string>
+    <string name="chat_action_unarchive">إلغاء الأرشفة</string>
+    <string name="chat_action_mute">كتم الإشعارات</string>
+    <string name="chat_action_unmute">تفعيل الإشعارات</string>
+    <string name="chat_action_mark_unread">تحديد كغير مقروءة</string>
+    <string name="chat_action_mark_read">تحديد كمقروءة</string>
 
     <!-- Account states -->
     <string name="state_not_connected">غير متصل</string>
@@ -34,13 +45,13 @@
 
     <!-- Account management -->
     <string name="account_slot_format">الحساب %1$d</string>
-    <string name="btn_connect_qr">ربط / اتصال</string>
+    <string name="btn_connect_qr">ربط / مسح QR</string>
     <string name="btn_pair_code">الربط برمز رقم الهاتف</string>
     <string name="btn_reconnect">إعادة الاتصال</string>
     <string name="btn_disconnect">قطع الاتصال</string>
     <string name="btn_remove">إزالة الحساب</string>
     <string name="btn_replace">استبدال</string>
-    <string name="qr_instructions">افتح تطبيق واتساب الرسمي على هاتفك ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز، ثم امسح رمز QR هذا.</string>
+    <string name="qr_instructions">افتح تطبيق واتساب الرسمي على هاتفك الأساسي ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز، ثم امسح رمز QR هذا.</string>
     <string name="pair_code_instructions">أدخل رقم الهاتف مع مفتاح الدولة (أرقام فقط مثل 967771234567)، ثم أدخل الرمز المكون من 8 خانات في واتساب الرسمي ← الربط برقم الهاتف.</string>
     <string name="pair_code_waiting_confirmation">تم إنشاء الرمز. بانتظار تأكيد الربط من هاتفك الأساسي…</string>
 
@@ -55,29 +66,40 @@
     <string name="btn_download_media">تنزيل</string>
     <string name="btn_open_media">فتح</string>
     <string name="reply_label">رد على</string>
+    <string name="btn_retry_send">إعادة المحاولة</string>
+    <string name="msg_status_pending">جارٍ الإرسال…</string>
+    <string name="msg_status_failed">تعذّر الإرسال</string>
+    <string name="btn_forward">إعادة توجيه</string>
+    <string name="btn_delete_for_me">حذف لديّ فقط</string>
+    <string name="btn_search_in_chat">بحث داخل المحادثة</string>
 
-    <!-- Settings & Security Disclosure -->
+    <!-- Settings, Backup & About -->
     <string name="settings_language">اللغة</string>
     <string name="lang_english">English (LTR)</string>
     <string name="lang_arabic">العربية (RTL)</string>
-    <string name="settings_theme">المظهر</string>
-    <string name="theme_dark">داكن (افتراضي)</string>
-    <string name="theme_amoled">أسود داكن AMOLED</string>
+    <string name="settings_theme">المظهر وحجم الخط</string>
+    <string name="theme_amoled">أسود أوبسيديان (#0B0B0F)</string>
+    <string name="theme_dark">داكن قياسي</string>
     <string name="theme_light">فاتح</string>
+    <string name="font_scale_small">صغير</string>
+    <string name="font_scale_default">افتراضي</string>
+    <string name="font_scale_large">كبير</string>
+    <string name="font_scale_xl">كبير جداً</string>
     <string name="settings_notifications">الإشعارات والخدمة الخلفية</string>
     <string name="settings_battery_opt">إعداد استثناء تحسين البطارية (One UI 7)</string>
     <string name="settings_storage">التخزين والوسائط</string>
     <string name="btn_clear_media_cache">مسح ملفات الوسائط المحملة</string>
-    <string name="settings_backup">النسخ الاحتياطي المحلي المشفر</string>
-    <string name="btn_export_backup">تصدير نسخة احتياطية مشفرة</string>
+    <string name="settings_backup">النسخ الاحتياطي المشفر والنقل بين الأجهزة</string>
+    <string name="btn_export_backup">تصدير نسخة مشفرة محمولة</string>
     <string name="btn_import_backup">استعادة نسخة احتياطية مشفرة</string>
-    <string name="settings_diagnostics">سجل التشخيص المنقّح</string>
+    <string name="settings_diagnostics">سجل التشخيص المنقّح وصحة المحرك</string>
+    <string name="settings_about">حول رافت هب</string>
     <string name="unofficial_warning_title">تنبيه البروتوكول غير الرسمي وإخلاء المسؤولية</string>
-    <string name="unofficial_warning_body">يعتمد تطبيق واتساب هَب على مكتبة whatsmeow المفتوحة المصدر من طرف ثالث لبروتوكول الأجهزة المرتبطة، وهو غير تابع لشركة واتساب أو ميتا. قد يترتب على استخدام عملاء غير رسميين قيود مؤقتة أو حظر للحساب وفق شروط خدمة واتساب ولا يوجد ضمان بعدم تقييد الحساب. المكالمات الصوتية والمرئية وإدارة القوائم البريدية غير مدعومة.</string>
+    <string name="unofficial_warning_body">يعتمد تطبيق رافت هب على مكتبة whatsmeow المفتوحة المصدر لبروتوكول الأجهزة المرتبطة، وهو غير تابع لشركة واتساب أو ميتا. قد يترتب على استخدام عملاء غير رسميين قيود مؤقتة أو حظر للحساب وفق شروط خدمة واتساب ولا يوجد ضمان بعدم تقييد الحساب. المكالمات الصوتية والمرئية والحالات والقنوات غير مدعومة.</string>
 
     <!-- Foreground Service -->
-    <string name="fgs_channel_name">اتصالات واتساب هَب النشطة</string>
-    <string name="msg_channel_name">رسائل واتساب هَب الواردة</string>
-    <string name="fgs_notification_title">خدمة واتساب هَب متعددة الحسابات</string>
+    <string name="fgs_channel_name">اتصالات رافت هب النشطة</string>
+    <string name="msg_channel_name">رسائل رافت هب الواردة</string>
+    <string name="fgs_notification_title">خدمة رافت هب متعددة الحسابات</string>
     <string name="fgs_notification_body">%1$d من أصل 4 حسابات متصلة</string>
 </resources>

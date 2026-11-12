@@ -4,7 +4,18 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Deep Obsidian base -->
     <path
-        android:fillColor="#0B141A"
+        android:fillColor="#0B0B0F"
         android:pathData="M0,0h108v108h-108z" />
+    <!-- Subtle Carbon Slate inner medallion inside adaptive safe zone -->
+    <path
+        android:fillColor="#15151C"
+        android:pathData="M54,18 C73.88,18 90,34.12 90,54 C90,73.88 73.88,90 54,90 C34.12,90 18,73.88 18,54 C18,34.12 34.12,18 54,18 Z" />
+    <!-- Subtle Warm Gold luxury ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#38D4AF37"
+        android:strokeWidth="1.4"
+        android:pathData="M54,23 C71.12,23 85,36.88 85,54 C85,71.12 71.12,85 54,85 C36.88,85 23,71.12 23,54 C23,36.88 36.88,23 54,23 Z" />
 </vector>

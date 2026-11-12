@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 
 	"go.mau.fi/whatsmeow"
@@ -43,10 +44,16 @@ type ParsedMessage struct {
 	ReactionEmoji   string
 }
 
-// UnwrapMessage strips wrapper containers (ephemeral, view-once, document-with-caption).
+// UnwrapMessage recursively strips WhatsApp wrapper containers:
+// primary-phone DeviceSentMessage, EditedMessage, EphemeralMessage,
+// DocumentWithCaption, ViewOnce (v1/v2/ext), GroupMentioned, and LottieSticker.
 func UnwrapMessage(msg *waE2E.Message) *waE2E.Message {
-	for i := 0; i < 6 && msg != nil; i++ {
+	for i := 0; i < 8 && msg != nil; i++ {
 		switch {
+		case msg.GetDeviceSentMessage().GetMessage() != nil:
+			msg = msg.GetDeviceSentMessage().GetMessage()
+		case msg.GetEditedMessage().GetMessage() != nil:
+			msg = msg.GetEditedMessage().GetMessage()
 		case msg.GetEphemeralMessage().GetMessage() != nil:
 			msg = msg.GetEphemeralMessage().GetMessage()
 		case msg.GetDocumentWithCaptionMessage().GetMessage() != nil:
@@ -57,6 +64,10 @@ func UnwrapMessage(msg *waE2E.Message) *waE2E.Message {
 			msg = msg.GetViewOnceMessageV2().GetMessage()
 		case msg.GetViewOnceMessageV2Extension().GetMessage() != nil:
 			msg = msg.GetViewOnceMessageV2Extension().GetMessage()
+		case msg.GetGroupMentionedMessage().GetMessage() != nil:
+			msg = msg.GetGroupMentionedMessage().GetMessage()
+		case msg.GetLottieStickerMessage().GetMessage() != nil:
+			msg = msg.GetLottieStickerMessage().GetMessage()
 		default:
 			return msg
 		}
@@ -90,6 +101,10 @@ func extractContextInfo(ci *waE2E.ContextInfo, out *ParsedMessage) {
 			out.QuotedText = firstNonEmpty(qm.GetDocumentMessage().GetFileName(), "[Document]")
 		case qm.GetStickerMessage() != nil:
 			out.QuotedText = "[Sticker]"
+		case qm.GetLocationMessage() != nil || qm.GetLiveLocationMessage() != nil:
+			out.QuotedText = "[Location]"
+		case qm.GetContactMessage() != nil || qm.GetContactsArrayMessage() != nil:
+			out.QuotedText = "[Contact]"
 		}
 	}
 }
@@ -251,6 +266,87 @@ func ParseE2EMessage(raw *waE2E.Message) ParsedMessage {
 		}
 		extractContextInfo(stk.GetContextInfo(), &out)
 		return out
+	}
+
+	// Location & Live Location
+	if loc := msg.GetLocationMessage(); loc != nil {
+		label := strings.TrimSpace(firstNonEmpty(loc.GetName(), loc.GetAddress(), loc.GetComment()))
+		coords := fmt.Sprintf("%.5f, %.5f", loc.GetDegreesLatitude(), loc.GetDegreesLongitude())
+		text := "Location: " + coords
+		if label != "" {
+			text = fmt.Sprintf("Location: %s (%s)", label, coords)
+		}
+		out := ParsedMessage{Kind: KindMessage, Text: text}
+		extractContextInfo(loc.GetContextInfo(), &out)
+		return out
+	}
+	if live := msg.GetLiveLocationMessage(); live != nil {
+		coords := fmt.Sprintf("%.5f, %.5f", live.GetDegreesLatitude(), live.GetDegreesLongitude())
+		text := "Live Location: " + coords
+		if strings.TrimSpace(live.GetCaption()) != "" {
+			text = fmt.Sprintf("Live Location: %s (%s)", strings.TrimSpace(live.GetCaption()), coords)
+		}
+		out := ParsedMessage{Kind: KindMessage, Text: text}
+		extractContextInfo(live.GetContextInfo(), &out)
+		return out
+	}
+
+	// Shared Contact & Contacts Array
+	if ct := msg.GetContactMessage(); ct != nil {
+		name := firstNonEmpty(ct.GetDisplayName(), "Shared Contact")
+		out := ParsedMessage{Kind: KindMessage, Text: "Contact: " + name}
+		extractContextInfo(ct.GetContextInfo(), &out)
+		return out
+	}
+	if cta := msg.GetContactsArrayMessage(); cta != nil {
+		names := make([]string, 0, len(cta.GetContacts()))
+		for _, c := range cta.GetContacts() {
+			if n := strings.TrimSpace(c.GetDisplayName()); n != "" {
+				names = append(names, n)
+			}
+		}
+		summary := firstNonEmpty(strings.Join(names, ", "), cta.GetDisplayName(), "Shared Contacts")
+		out := ParsedMessage{Kind: KindMessage, Text: "Contacts: " + summary}
+		extractContextInfo(cta.GetContextInfo(), &out)
+		return out
+	}
+
+	// Polls (v1 / v2 / v3 / v5 / v6)
+	poll := msg.GetPollCreationMessage()
+	if poll == nil {
+		poll = msg.GetPollCreationMessageV2()
+	}
+	if poll == nil {
+		poll = msg.GetPollCreationMessageV3()
+	}
+	if poll == nil {
+		poll = msg.GetPollCreationMessageV5()
+	}
+	if poll == nil {
+		poll = msg.GetPollCreationMessageV6()
+	}
+	if poll != nil {
+		opts := make([]string, 0, len(poll.GetOptions()))
+		for _, opt := range poll.GetOptions() {
+			if n := strings.TrimSpace(opt.GetOptionName()); n != "" {
+				opts = append(opts, "• "+n)
+			}
+		}
+		text := "Poll: " + firstNonEmpty(poll.GetName(), "Untitled Poll")
+		if len(opts) > 0 {
+			text += "\n" + strings.Join(opts, "\n")
+		}
+		out := ParsedMessage{Kind: KindMessage, Text: text}
+		extractContextInfo(poll.GetContextInfo(), &out)
+		return out
+	}
+
+	// Buttons / Template replies
+	if br := msg.GetButtonsResponseMessage(); br != nil && br.GetSelectedDisplayText() != "" {
+		return ParsedMessage{Kind: KindMessage, Text: br.GetSelectedDisplayText()}
+	}
+	if tr := msg.GetTemplateButtonReplyMessage(); tr != nil && tr.GetSelectedDisplayText() != "" {
+		return ParsedMessage{Kind: KindMessage, Text: tr.GetSelectedDisplayText()}
 	}
 
 	return ParsedMessage{Kind: KindIgnore}

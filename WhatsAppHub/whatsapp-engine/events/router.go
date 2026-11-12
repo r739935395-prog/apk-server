@@ -12,75 +12,112 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-const defaultMaxQueueSize = 8192
+const defaultMaxQueueSize = 32768
 
-// Router buffers events from all four isolated sessions and serializes them
-// cleanly in FIFO batches for Kotlin consumption.
+// Callback receives JSON-encoded event envelopes immediately when registered.
+type Callback func(jsonPayload string)
+
+// Router buffers and dispatches account-isolated events from all 4 WhatsApp engines
+// using monotonic sequence numbers and explicit durable acknowledgment (Peek + Ack)
+// so events are never lost if JNI decoding or Android persistence is interrupted.
 type Router struct {
 	mu       sync.Mutex
-	queue    []Envelope
-	maxSize  int
 	seq      atomic.Uint64
+	maxQueue int
+	queue    []Envelope
+	callback Callback
 	debugLog atomic.Bool
 }
 
-// NewRouter creates an event router with a bounded buffer.
-func NewRouter(maxSize int) *Router {
-	if maxSize <= 0 {
-		maxSize = defaultMaxQueueSize
+// NewRouter creates an isolated event router with bounded memory usage.
+func NewRouter(maxQueue int) *Router {
+	if maxQueue <= 0 {
+		maxQueue = defaultMaxQueueSize
 	}
 	return &Router{
-		queue:   make([]Envelope, 0, 256),
-		maxSize: maxSize,
+		maxQueue: maxQueue,
+		queue:    make([]Envelope, 0, 512),
 	}
 }
 
-// SetDebugLogging toggles verbose diagnostic log events (still sanitized).
+// SetCallback registers an optional push listener. Passing nil disables push callbacks.
+func (r *Router) SetCallback(cb Callback) {
+	r.mu.Lock()
+	r.callback = cb
+	r.mu.Unlock()
+}
+
+// SetDebugLogging toggles verbose diagnostic log emission.
 func (r *Router) SetDebugLogging(enabled bool) {
 	r.debugLog.Store(enabled)
 }
 
-// Emit appends an event stamped with sequence number and current timestamp.
-// Account-scoped events with an out-of-range accountID are rejected to prevent
-// cross-account or unattributed event leakage.
+// DebugLoggingEnabled reports whether verbose diagnostic logs are enabled.
+func (r *Router) DebugLoggingEnabled() bool {
+	return r.debugLog.Load()
+}
+
+// Emit assigns a monotonic sequence number, stamps composite keys, and enqueues the event.
+// Critical messaging/account events are protected from eviction by purging ephemeral
+// typing/presence/diagnostic events first if the buffer reaches capacity.
 func (r *Router) Emit(env Envelope) bool {
-	if env.Type != EventDiagnosticLog && !ValidAccountID(env.AccountID) {
+	if env.Type != EventDiagnosticLog {
+		if !ValidAccountID(env.AccountID) {
+			return false
+		}
+	} else if env.AccountID != 0 && !ValidAccountID(env.AccountID) {
 		return false
 	}
+
 	if env.TimestampMs == 0 {
 		env.TimestampMs = time.Now().UnixMilli()
 	}
-	if env.ChatJID != "" && env.CompositeChatKey == "" && ValidAccountID(env.AccountID) {
+	if ValidAccountID(env.AccountID) && env.ChatJID != "" {
 		env.CompositeChatKey = CompositeChatKey(env.AccountID, env.ChatJID)
+		if env.MessageID != "" {
+			env.CompositeMsgKey = CompositeMessageKey(env.AccountID, env.ChatJID, env.MessageID)
+		}
 	}
-	if env.ChatJID != "" && env.MessageID != "" && env.CompositeMsgKey == "" && ValidAccountID(env.AccountID) {
-		env.CompositeMsgKey = CompositeMessageKey(env.AccountID, env.ChatJID, env.MessageID)
-	}
-	env.Seq = r.seq.Add(1)
+	seq := r.seq.Add(1)
+	env.Seq = seq
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if len(r.queue) >= r.maxSize {
-		// Drop oldest low-priority diagnostic/presence event first before dropping oldest item.
-		dropped := false
-		for i, item := range r.queue {
-			if item.Type == EventDiagnosticLog || item.Type == EventPresence || item.Type == EventTyping {
-				r.queue = append(r.queue[:i], r.queue[i+1:]...)
-				dropped = true
+	if len(r.queue) >= r.maxQueue {
+		if !IsCriticalEvent(env.Type) {
+			r.mu.Unlock()
+			return true
+		}
+		evicted := false
+		for i := 0; i < len(r.queue); i++ {
+			if !IsCriticalEvent(r.queue[i].Type) {
+				copy(r.queue[i:], r.queue[i+1:])
+				r.queue[len(r.queue)-1] = Envelope{}
+				r.queue = r.queue[:len(r.queue)-1]
+				evicted = true
 				break
 			}
 		}
-		if !dropped {
-			r.queue = r.queue[1:]
+		if !evicted && len(r.queue) >= r.maxQueue*2 {
+			copy(r.queue[0:], r.queue[1:])
+			r.queue[len(r.queue)-1] = Envelope{}
+			r.queue = r.queue[:len(r.queue)-1]
 		}
 	}
 	r.queue = append(r.queue, env)
+	cb := r.callback
+	r.mu.Unlock()
+
+	if cb != nil {
+		if data, err := json.Marshal(env); err == nil {
+			cb(string(data))
+		}
+	}
 	return true
 }
 
-// Poll drains up to maxBatch events from the queue.
-func (r *Router) Poll(maxBatch int) []Envelope {
+// Peek returns up to maxBatch queued events in FIFO order WITHOUT removing them.
+// Callers must invoke Ack(upToSeq) after durably persisting the batch.
+func (r *Router) Peek(maxBatch int) []Envelope {
 	if maxBatch <= 0 {
 		maxBatch = 128
 	}
@@ -89,33 +126,84 @@ func (r *Router) Poll(maxBatch int) []Envelope {
 	if len(r.queue) == 0 {
 		return nil
 	}
-	if maxBatch >= len(r.queue) {
-		out := r.queue
-		r.queue = make([]Envelope, 0, 128)
-		return out
+	n := maxBatch
+	if n > len(r.queue) {
+		n = len(r.queue)
 	}
-	out := make([]Envelope, maxBatch)
-	copy(out, r.queue[:maxBatch])
-	remaining := make([]Envelope, len(r.queue)-maxBatch)
-	copy(remaining, r.queue[maxBatch:])
-	r.queue = remaining
+	out := make([]Envelope, n)
+	copy(out, r.queue[:n])
 	return out
 }
 
-// PollJSON drains up to maxBatch events as a JSON array string.
+// PeekJSON returns a JSON array string of up to maxBatch unacknowledged events.
+func (r *Router) PeekJSON(maxBatch int) string {
+	batch := r.Peek(maxBatch)
+	if len(batch) == 0 {
+		return "[]"
+	}
+	data, err := json.Marshal(batch)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+// Ack removes all queued events with Seq <= upToSeq and returns the number of acknowledged items.
+func (r *Router) Ack(upToSeq uint64) int {
+	if upToSeq == 0 {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.queue) == 0 {
+		return 0
+	}
+	cut := 0
+	for cut < len(r.queue) && r.queue[cut].Seq <= upToSeq {
+		cut++
+	}
+	if cut == 0 {
+		return 0
+	}
+	rem := len(r.queue) - cut
+	if rem == 0 {
+		for i := range r.queue {
+			r.queue[i] = Envelope{}
+		}
+		r.queue = r.queue[:0]
+	} else {
+		copy(r.queue[0:], r.queue[cut:])
+		for i := rem; i < len(r.queue); i++ {
+			r.queue[i] = Envelope{}
+		}
+		r.queue = r.queue[:rem]
+	}
+	return cut
+}
+
+// Poll dequeues up to maxBatch events immediately (retained for legacy callers/tests).
+func (r *Router) Poll(maxBatch int) []Envelope {
+	batch := r.Peek(maxBatch)
+	if len(batch) > 0 {
+		r.Ack(batch[len(batch)-1].Seq)
+	}
+	return batch
+}
+
+// PollJSON returns a JSON array string of up to maxBatch queued events and removes them.
 func (r *Router) PollJSON(maxBatch int) string {
 	batch := r.Poll(maxBatch)
 	if len(batch) == 0 {
 		return "[]"
 	}
-	b, err := json.Marshal(batch)
+	data, err := json.Marshal(batch)
 	if err != nil {
 		return "[]"
 	}
-	return string(b)
+	return string(data)
 }
 
-// PendingCount returns the number of queued events awaiting delivery.
+// PendingCount returns the current number of unacknowledged events in the queue.
 func (r *Router) PendingCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

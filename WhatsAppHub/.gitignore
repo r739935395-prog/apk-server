@@ -4,5 +4,11 @@ build/
 local.properties
 *.keystore
 *.jks
+*.p12
+*.pfx
+*.pk8
+*.key
+*.vault.enc
+*signing-vault*
 app/src/main/jniLibs/
 !app-release.apk

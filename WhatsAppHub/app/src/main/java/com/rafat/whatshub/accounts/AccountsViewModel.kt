@@ -37,7 +37,7 @@ class AccountsViewModel(private val repository: HubRepository) : ViewModel() {
         repository.accounts,
         repository.qrStates,
         repository.pairingCodes,
-        repository.database.changeVersion
+        repository.database.syncInvalidations
     ) { accounts, qrs, codes, _ ->
         accounts.map { acct ->
             AccountCardUiModel(

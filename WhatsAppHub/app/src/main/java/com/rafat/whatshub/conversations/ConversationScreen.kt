@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +36,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -42,15 +44,21 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -64,6 +72,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -71,10 +80,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -94,14 +106,19 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.rafat.whatshub.R
+import com.rafat.whatshub.database.ChatSummaryRecord
 import com.rafat.whatshub.database.GroupMemberRecord
 import com.rafat.whatshub.database.GroupRecord
+import com.rafat.whatshub.database.IdentityResolver
 import com.rafat.whatshub.database.MessageRecord
 import com.rafat.whatshub.ui.components.AccountBadge
 import com.rafat.whatshub.ui.components.ConversationAvatar
 import com.rafat.whatshub.ui.components.formatHubTimestamp
+import com.rafat.whatshub.ui.theme.StatusErrorRed
 import com.rafat.whatshub.ui.theme.accountColor
+import kotlinx.coroutines.launch
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,14 +134,56 @@ fun ConversationScreen(
 
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val uiScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val acctColor = accountColor(state.accountId)
 
     var draftText by rememberSaveable { mutableStateOf("") }
     var showAttachMenu by remember { mutableStateOf(false) }
+    var showInChatSearch by rememberSaveable { mutableStateOf(false) }
     var pendingAttachmentType by rememberSaveable { mutableStateOf("document") }
     var selectedMessageForActions by remember { mutableStateOf<MessageRecord?>(null) }
+    var messagePendingForward by remember { mutableStateOf<MessageRecord?>(null) }
     var showGroupDetailsSheet by rememberSaveable { mutableStateOf(false) }
+
+    // Scroll preservation state: never yank the user down when reading older history!
+    var initialScrollDone by remember { mutableStateOf(false) }
+    var previousMsgCount by remember { mutableIntStateOf(0) }
+    var unseenWhileScrolledUp by remember { mutableIntStateOf(0) }
+
+    val isNearBottom by remember {
+        derivedStateOf {
+            val total = listState.layoutInfo.totalItemsCount
+            if (total == 0) true
+            else {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVisible >= total - 4
+            }
+        }
+    }
+
+    LaunchedEffect(isNearBottom) {
+        if (isNearBottom) unseenWhileScrolledUp = 0
+    }
+
+    LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.messageId) {
+        val count = state.messages.size
+        if (count > 0) {
+            val newestIsMine = state.messages.lastOrNull()?.isFromMe == true && count > previousMsgCount
+            if (!initialScrollDone) {
+                listState.scrollToItem(count - 1)
+                initialScrollDone = true
+            } else if (count > previousMsgCount) {
+                if (isNearBottom || newestIsMine) {
+                    listState.animateScrollToItem(count - 1)
+                    unseenWhileScrolledUp = 0
+                } else {
+                    unseenWhileScrolledUp += (count - previousMsgCount).coerceAtLeast(1)
+                }
+            }
+        }
+        previousMsgCount = count
+    }
 
     // Voice note recording state
     var activeRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
@@ -149,18 +208,14 @@ fun ConversationScreen(
         }
     }
 
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) {
-            listState.animateScrollToItem(state.messages.lastIndex)
-        }
-    }
-
     val openDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            viewModel.sendUriAttachment(context, uri, pendingAttachmentType, draftText.trim())
-            draftText = ""
+            val captionSnapshot = draftText.trim()
+            viewModel.sendUriAttachment(context, uri, pendingAttachmentType, captionSnapshot) {
+                draftText = ""
+            }
         }
     }
 
@@ -195,23 +250,29 @@ fun ConversationScreen(
         if (granted) startVoiceRecording()
     }
 
-    val chatTitle = state.chat?.title
-        ?: state.group?.name
-        ?: state.contact?.displayName
-        ?: state.chatJid.substringBefore('@')
-    val isGroup = state.chatJid.endsWith("@g.us")
+    val isGroup = IdentityResolver.isGroupJid(state.chatJid)
+    val chatTitle = IdentityResolver.cleanDisplayTitle(
+        chatJid = state.chatJid,
+        storedTitle = state.chat?.title ?: state.group?.name ?: state.contact?.cleanDisplayName.orEmpty(),
+        verifiedPhoneJid = state.contact?.pnJid.orEmpty(),
+        fallbackPushName = state.contact?.pushName.orEmpty()
+    )
+    val verifiedPhoneSub = IdentityResolver.verifiedSubtitlePhone(
+        chatJid = state.chatJid,
+        verifiedPhoneJid = state.contact?.pnJid.orEmpty()
+    )
 
     val subtitle = when {
         state.chat?.isTyping == true -> stringResource(R.string.typing_indicator)
         isGroup && state.group != null -> "${state.group!!.participantCount} members"
-        state.contact?.isOnline == true -> "online"
-        else -> state.chatJid.substringBefore('@')
+        state.contact?.isOnline == true -> if (verifiedPhoneSub.isNotBlank()) "online • $verifiedPhoneSub" else "online"
+        verifiedPhoneSub.isNotBlank() && verifiedPhoneSub != chatTitle -> verifiedPhoneSub
+        else -> state.account?.label ?: "Account ${state.accountId}"
     }
 
     Scaffold(
         topBar = {
             Column {
-                // Signature account color stripe across the top of the conversation header
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -219,50 +280,98 @@ fun ConversationScreen(
                         .background(acctColor)
                 )
                 Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                        ConversationAvatar(
-                            title = chatTitle,
-                            accountId = state.accountId,
-                            isGroup = isGroup,
-                            size = 40.dp
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(
+                    Column {
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .clickable(enabled = isGroup) { showGroupDetailsSheet = true }
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = chatTitle,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = subtitle,
-                                fontSize = 12.sp,
-                                color = if (state.chat?.isTyping == true) acctColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
-                        }
-                        AccountBadge(
-                            accountId = state.accountId,
-                            label = state.account?.label
-                        )
-                        if (isGroup) {
-                            IconButton(onClick = { showGroupDetailsSheet = true }) {
-                                Icon(Icons.Default.Info, contentDescription = "Group Info")
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                             }
-                        } else {
-                            Spacer(modifier = Modifier.width(8.dp))
+                            ConversationAvatar(
+                                title = chatTitle,
+                                accountId = state.accountId,
+                                isGroup = isGroup,
+                                size = 40.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable(enabled = isGroup) { showGroupDetailsSheet = true }
+                            ) {
+                                Text(
+                                    text = chatTitle,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = subtitle,
+                                    fontSize = 12.sp,
+                                    color = if (state.chat?.isTyping == true) acctColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            AccountBadge(
+                                accountId = state.accountId,
+                                label = state.account?.label
+                            )
+                            IconButton(
+                                onClick = {
+                                    showInChatSearch = !showInChatSearch
+                                    if (!showInChatSearch) viewModel.setInChatSearchQuery("")
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = stringResource(R.string.btn_search_in_chat)
+                                )
+                            }
+                            if (isGroup) {
+                                IconButton(onClick = { showGroupDetailsSheet = true }) {
+                                    Icon(Icons.Default.Info, contentDescription = "Group Info")
+                                }
+                            }
+                        }
+
+                        if (showInChatSearch) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = state.inChatSearchQuery,
+                                    onValueChange = viewModel::setInChatSearchQuery,
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    placeholder = { Text(stringResource(R.string.btn_search_in_chat)) },
+                                    trailingIcon = {
+                                        if (state.inChatSearchQuery.isNotEmpty()) {
+                                            Text(
+                                                text = "${state.inChatSearchResults.size}",
+                                                fontSize = 12.sp,
+                                                color = acctColor,
+                                                modifier = Modifier.padding(end = 10.dp)
+                                            )
+                                        }
+                                    }
+                                )
+                                IconButton(
+                                    onClick = {
+                                        showInChatSearch = false
+                                        viewModel.setInChatSearchQuery("")
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Close Search")
+                                }
+                            }
                         }
                     }
                 }
@@ -276,68 +385,125 @@ fun ConversationScreen(
                 .imePadding()
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // Error banner if sending/downloading fails
             errorBanner?.let { err ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.18f))
+                        .background(StatusErrorRed.copy(alpha = 0.16f))
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
                         text = err,
-                        color = MaterialTheme.colorScheme.error,
+                        color = StatusErrorRed,
                         fontSize = 12.sp,
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = viewModel::dismissError, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = MaterialTheme.colorScheme.error)
+                        Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = StatusErrorRed)
                     }
                 }
             }
 
-            // Messages list
-            LazyColumn(
-                state = listState,
+            val displayedMessages = if (showInChatSearch && state.inChatSearchQuery.isNotBlank()) {
+                state.inChatSearchResults
+            } else {
+                state.messages
+            }
+
+            // Messages viewport + floating scroll-to-bottom pill
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .fillMaxWidth()
             ) {
-                items(
-                    items = state.messages,
-                    key = { it.compositeKey }
-                ) { msg ->
-                    MessageBubble(
-                        msg = msg,
-                        accountColor = acctColor,
-                        isPlayingAudio = playingMsgId == msg.messageId,
-                        onLongPress = { selectedMessageForActions = msg },
-                        onDownloadMedia = { viewModel.downloadMedia(msg) },
-                        onOpenMedia = { path, mime -> openFileExternally(context, path, mime) },
-                        onTogglePlayAudio = { path ->
-                            runCatching {
-                                if (playingMsgId == msg.messageId && mediaPlayer.isPlaying) {
-                                    mediaPlayer.pause()
-                                    playingMsgId = null
-                                } else {
-                                    mediaPlayer.reset()
-                                    mediaPlayer.setDataSource(path)
-                                    mediaPlayer.prepare()
-                                    mediaPlayer.setOnCompletionListener { playingMsgId = null }
-                                    mediaPlayer.start()
-                                    playingMsgId = msg.messageId
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (state.canLoadOlder && !showInChatSearch) {
+                        item(key = "load_older_header") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                OutlinedButton(onClick = viewModel::loadOlderMessages) {
+                                    Text("Load earlier messages")
                                 }
                             }
                         }
-                    )
+                    }
+
+                    items(
+                        items = displayedMessages,
+                        key = { it.compositeKey }
+                    ) { msg ->
+                        MessageBubble(
+                            msg = msg,
+                            accountColor = acctColor,
+                            isPlayingAudio = playingMsgId == msg.messageId,
+                            onLongPress = { selectedMessageForActions = msg },
+                            onRetryFailed = { viewModel.retryMessage(msg) },
+                            onDownloadMedia = { viewModel.downloadMedia(msg) },
+                            onOpenMedia = { path, mime -> openFileExternally(context, path, mime) },
+                            onTogglePlayAudio = { path ->
+                                runCatching {
+                                    if (playingMsgId == msg.messageId && mediaPlayer.isPlaying) {
+                                        mediaPlayer.pause()
+                                        playingMsgId = null
+                                    } else {
+                                        mediaPlayer.reset()
+                                        mediaPlayer.setDataSource(path)
+                                        mediaPlayer.prepare()
+                                        mediaPlayer.setOnCompletionListener { playingMsgId = null }
+                                        mediaPlayer.start()
+                                        playingMsgId = msg.messageId
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+
+                if (!isNearBottom && displayedMessages.isNotEmpty()) {
+                    SmallFloatingActionButton(
+                        onClick = {
+                            uiScope.launch {
+                                listState.animateScrollToItem(displayedMessages.lastIndex)
+                                unseenWhileScrolledUp = 0
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = acctColor,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to latest")
+                            if (unseenWhileScrolledUp > 0) {
+                                Text(
+                                    text = "$unseenWhileScrolledUp",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = acctColor
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
-            // Explicit account ownership bar above composer so user never confuses sending account
+            // Explicit account ownership bar above composer
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -356,6 +522,9 @@ fun ConversationScreen(
 
             // Reply preview banner
             replyTarget?.let { target ->
+                val cleanQuotedSender = target.senderName.ifBlank {
+                    IdentityResolver.formatVerifiedPhone(target.senderJid).ifBlank { "Contact" }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -365,7 +534,7 @@ fun ConversationScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "${stringResource(R.string.reply_label)} ${target.senderName.ifBlank { target.senderJid.substringBefore('@') }}",
+                            text = "${stringResource(R.string.reply_label)} $cleanQuotedSender",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = acctColor
@@ -396,7 +565,7 @@ fun ConversationScreen(
                     ) {
                         Text(
                             text = "Recording voice note…",
-                            color = MaterialTheme.colorScheme.error,
+                            color = StatusErrorRed,
                             fontWeight = FontWeight.SemiBold
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -520,12 +689,20 @@ fun ConversationScreen(
 
                         if (isSending) {
                             Box(modifier = Modifier.padding(12.dp)) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp, color = acctColor)
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = acctColor
+                                )
                             }
                         } else if (draftText.isNotBlank()) {
                             IconButton(
                                 onClick = {
-                                    viewModel.sendText(draftText) { draftText = "" }
+                                    val outgoingSnapshot = draftText
+                                    viewModel.sendText(outgoingSnapshot) {
+                                        // Invoked ONLY after local SQLite Pending commit succeeds!
+                                        draftText = ""
+                                    }
                                 },
                                 modifier = Modifier
                                     .clip(CircleShape)
@@ -567,29 +744,45 @@ fun ConversationScreen(
         }
     }
 
-    // Message actions dialog (Reply, React, Copy, Delete for Everyone)
+    // Message Actions Sheet (React, Reply, Forward, Retry, Copy, Delete for Me, Delete for Everyone)
     selectedMessageForActions?.let { target ->
         AlertDialog(
             onDismissRequest = { selectedMessageForActions = null },
             title = { Text("Message Actions") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        for (emoji in listOf("👍", "❤️", "😂", "😮", "😢", "🙏")) {
-                            Text(
-                                text = emoji,
-                                fontSize = 24.sp,
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        viewModel.reactToMessage(target, emoji)
-                                        selectedMessageForActions = null
-                                    }
-                                    .padding(6.dp)
-                            )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!target.isDeleted && target.status != "failed" && target.status != "pending") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            for (emoji in listOf("👍", "❤️", "😂", "😮", "😢", "🙏")) {
+                                Text(
+                                    text = emoji,
+                                    fontSize = 24.sp,
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .clickable {
+                                            viewModel.reactToMessage(target, emoji)
+                                            selectedMessageForActions = null
+                                        }
+                                        .padding(6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (target.isFromMe && target.status == "failed") {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.retryMessage(target)
+                                selectedMessageForActions = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = acctColor)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.btn_retry_send))
                         }
                     }
 
@@ -603,6 +796,20 @@ fun ConversationScreen(
                         Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Reply")
+                    }
+
+                    if (!target.isDeleted) {
+                        OutlinedButton(
+                            onClick = {
+                                messagePendingForward = target
+                                selectedMessageForActions = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Forward, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.btn_forward))
+                        }
                     }
 
                     if (target.textBody.isNotBlank()) {
@@ -619,7 +826,19 @@ fun ConversationScreen(
                         }
                     }
 
-                    if (target.isFromMe && !target.isDeleted) {
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.deleteForMe(target)
+                            selectedMessageForActions = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.btn_delete_for_me))
+                    }
+
+                    if (target.isFromMe && !target.isDeleted && target.status != "pending" && target.status != "failed") {
                         OutlinedButton(
                             onClick = {
                                 viewModel.deleteForEveryone(target)
@@ -627,15 +846,28 @@ fun ConversationScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = StatusErrorRed)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Delete for Everyone", color = MaterialTheme.colorScheme.error)
+                            Text("Delete for Everyone", color = StatusErrorRed)
                         }
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = { selectedMessageForActions = null }) { Text("Close") }
+            }
+        )
+    }
+
+    // Forward Message Dialog (supports same account or explicit cross-account selection)
+    messagePendingForward?.let { forwardTarget ->
+        ForwardDestinationDialog(
+            currentAccountId = state.accountId,
+            candidates = state.forwardCandidateChats,
+            onDismiss = { messagePendingForward = null },
+            onSelectDestination = { destAcct, destJid ->
+                viewModel.forwardMessage(forwardTarget, destAcct, destJid)
+                messagePendingForward = null
             }
         )
     }
@@ -657,15 +889,19 @@ private fun MessageBubble(
     accountColor: Color,
     isPlayingAudio: Boolean,
     onLongPress: () -> Unit,
+    onRetryFailed: () -> Unit,
     onDownloadMedia: () -> Unit,
     onOpenMedia: (path: String, mime: String) -> Unit,
     onTogglePlayAudio: (path: String) -> Unit
 ) {
+    val context = LocalContext.current
     val align = if (msg.isFromMe) Alignment.End else Alignment.Start
-    val bubbleBg = if (msg.isFromMe) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
+    val isFailed = msg.isFromMe && msg.status == "failed"
+
+    val bubbleBg = when {
+        isFailed -> Color(0xFF3A161B)
+        msg.isFromMe -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val bubbleText = if (msg.isFromMe) {
         MaterialTheme.colorScheme.onPrimaryContainer
@@ -679,7 +915,7 @@ private fun MessageBubble(
     ) {
         Column(
             modifier = Modifier
-                .widthIn(min = 90.dp, max = 310.dp)
+                .widthIn(min = 96.dp, max = 315.dp)
                 .clip(
                     RoundedCornerShape(
                         topStart = 16.dp,
@@ -689,6 +925,13 @@ private fun MessageBubble(
                     )
                 )
                 .background(bubbleBg)
+                .then(
+                    if (isFailed) Modifier.border(
+                        1.dp,
+                        StatusErrorRed.copy(alpha = 0.65f),
+                        RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp)
+                    ) else Modifier
+                )
                 .combinedClickable(
                     onClick = {},
                     onLongClick = onLongPress
@@ -696,8 +939,11 @@ private fun MessageBubble(
                 .padding(horizontal = 11.dp, vertical = 8.dp)
         ) {
             if (msg.isGroup && !msg.isFromMe) {
+                val senderLabel = msg.senderName.ifBlank {
+                    IdentityResolver.formatVerifiedPhone(msg.senderJid).ifBlank { "Participant" }
+                }
                 Text(
-                    text = msg.senderName.ifBlank { msg.senderJid.substringBefore('@') },
+                    text = senderLabel,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = accountColor
@@ -706,15 +952,16 @@ private fun MessageBubble(
             }
 
             if (msg.quotedMessageId.isNotBlank() && !msg.isDeleted) {
+                val quotedAuthor = IdentityResolver.formatVerifiedPhone(msg.quotedSenderJid).ifBlank { "Quoted" }
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black.copy(alpha = 0.16f))
+                        .background(Color.Black.copy(alpha = 0.20f))
                         .padding(horizontal = 8.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = msg.quotedSenderJid.substringBefore('@').ifBlank { "Quoted" },
+                        text = quotedAuthor,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = accountColor
@@ -738,7 +985,6 @@ private fun MessageBubble(
                     fontSize = 13.sp
                 )
             } else {
-                // Media attachment rendering
                 msg.media?.let { media ->
                     val localFile = media.localPath.takeIf { it.isNotBlank() }?.let { File(it) }
                     val isReady = localFile != null && localFile.exists()
@@ -746,14 +992,21 @@ private fun MessageBubble(
                     when (media.mediaType) {
                         "image", "sticker" -> {
                             if (isReady) {
+                                val cachedRequest = remember(localFile!!.absolutePath) {
+                                    ImageRequest.Builder(context)
+                                        .data(localFile)
+                                        .memoryCacheKey("media:${localFile.absolutePath}")
+                                        .crossfade(false)
+                                        .build()
+                                }
                                 AsyncImage(
-                                    model = localFile,
+                                    model = cachedRequest,
                                     contentDescription = media.mediaType,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .heightIn(max = if (media.mediaType == "sticker") 150.dp else 220.dp)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .clickable { onOpenMedia(localFile!!.absolutePath, media.mimeType) },
+                                        .clickable { onOpenMedia(localFile.absolutePath, media.mimeType) },
                                     contentScale = ContentScale.Crop
                                 )
                             } else {
@@ -773,7 +1026,7 @@ private fun MessageBubble(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(Color.Black.copy(alpha = 0.14f))
+                                        .background(Color.Black.copy(alpha = 0.16f))
                                         .padding(6.dp)
                                 ) {
                                     IconButton(onClick = { onTogglePlayAudio(localFile!!.absolutePath) }) {
@@ -810,7 +1063,6 @@ private fun MessageBubble(
                         }
 
                         else -> {
-                            // Video or Document
                             if (isReady) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -818,7 +1070,7 @@ private fun MessageBubble(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(Color.Black.copy(alpha = 0.14f))
+                                        .background(Color.Black.copy(alpha = 0.16f))
                                         .clickable { onOpenMedia(localFile!!.absolutePath, media.mimeType) }
                                         .padding(10.dp)
                                 ) {
@@ -837,7 +1089,11 @@ private fun MessageBubble(
                                             color = bubbleText.copy(alpha = 0.75f)
                                         )
                                     }
-                                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = stringResource(R.string.btn_open_media), tint = accountColor)
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.OpenInNew,
+                                        contentDescription = stringResource(R.string.btn_open_media),
+                                        tint = accountColor
+                                    )
                                 }
                             } else {
                                 MediaDownloadRow(
@@ -863,12 +1119,13 @@ private fun MessageBubble(
                 }
             }
 
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
+            // Timestamp + Explicit Outgoing Status Indicator (Pending / Sent / Delivered / Read / Failed + Retry)
             Row(
                 modifier = Modifier.align(Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (msg.isEdited && !msg.isDeleted) {
                     Text("edited", fontSize = 10.sp, color = bubbleText.copy(alpha = 0.65f))
@@ -879,15 +1136,76 @@ private fun MessageBubble(
                     color = bubbleText.copy(alpha = 0.7f)
                 )
                 if (msg.isFromMe && !msg.isDeleted) {
-                    val ticks = when (msg.status) {
-                        "read" -> "✓✓"
-                        "delivered" -> "✓✓"
-                        "sent" -> "✓"
-                        else -> "…"
+                    when (msg.status) {
+                        "pending" -> {
+                            Icon(
+                                imageVector = Icons.Default.Schedule,
+                                contentDescription = stringResource(R.string.msg_status_pending),
+                                tint = bubbleText.copy(alpha = 0.7f),
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                        "failed" -> {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = stringResource(R.string.msg_status_failed),
+                                tint = StatusErrorRed,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                        "read" -> {
+                            Text(
+                                text = "✓✓",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+                        "delivered" -> {
+                            Text(
+                                text = "✓✓",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = bubbleText.copy(alpha = 0.78f)
+                            )
+                        }
+                        else -> {
+                            Text(
+                                text = "✓",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = bubbleText.copy(alpha = 0.78f)
+                            )
+                        }
                     }
-                    val tickColor = if (msg.status == "read") Color(0xFF53BDEB) else bubbleText.copy(alpha = 0.75f)
-                    Text(text = ticks, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = tickColor)
                 }
+            }
+        }
+
+        // Inline Retry pill on Failed outgoing messages
+        if (isFailed) {
+            Row(
+                modifier = Modifier
+                    .padding(top = 3.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(StatusErrorRed.copy(alpha = 0.16f))
+                    .clickable(onClick = onRetryFailed)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = StatusErrorRed,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = "${stringResource(R.string.msg_status_failed)} • ${stringResource(R.string.btn_retry_send)}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = StatusErrorRed
+                )
             }
         }
 
@@ -906,6 +1224,55 @@ private fun MessageBubble(
 }
 
 @Composable
+private fun ForwardDestinationDialog(
+    currentAccountId: Int,
+    candidates: List<ChatSummaryRecord>,
+    onDismiss: () -> Unit,
+    onSelectDestination: (accountId: Int, chatJid: String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.btn_forward)) },
+        text = {
+            if (candidates.isEmpty()) {
+                Text("No recent conversations available to forward to.")
+            } else {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val sorted = candidates.sortedByDescending { it.accountId == currentAccountId }
+                    items(sorted, key = { it.compositeKey }) { chat ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { onSelectDestination(chat.accountId, chat.chatJid) }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = chat.cleanTitle,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            AccountBadge(accountId = chat.accountId)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
 private fun MediaDownloadRow(
     title: String,
     subtitle: String,
@@ -916,7 +1283,7 @@ private fun MediaDownloadRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(Color.Black.copy(alpha = 0.14f))
+            .background(Color.Black.copy(alpha = 0.16f))
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -947,7 +1314,7 @@ private fun GroupDetailsSheetContent(
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 12.dp)
     ) {
-        Text(text = group.name, style = MaterialTheme.typography.titleLarge)
+        Text(text = group.name.ifBlank { "WhatsApp Group" }, style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = "Account ${group.accountId} • ${group.participantCount} participants",
@@ -964,14 +1331,13 @@ private fun GroupDetailsSheetContent(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             items(members, key = { it.memberJid }) { m ->
+                val cleanMemberLabel = IdentityResolver.formatVerifiedPhone(m.phoneJid.ifBlank { m.memberJid })
+                    .ifBlank { "Participant" }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = m.phoneJid.ifBlank { m.memberJid }.substringBefore('@'),
-                        fontSize = 13.sp
-                    )
+                    Text(text = cleanMemberLabel, fontSize = 13.sp)
                     if (m.isSuperAdmin || m.isAdmin) {
                         Text(
                             text = if (m.isSuperAdmin) "Owner" else "Admin",

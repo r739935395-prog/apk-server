@@ -20,6 +20,55 @@ func TestRouterRejectsInvalidAccountIDs(t *testing.T) {
 	}
 }
 
+func TestPeekAndAckDurabilityPreservesUnackedEvents(t *testing.T) {
+	r := NewRouter(64)
+	r.Emit(Envelope{Type: EventMessage, AccountID: 1, ChatJID: "967771111111@s.whatsapp.net", MessageID: "m1", Text: "first"})
+	r.Emit(Envelope{Type: EventMessage, AccountID: 2, ChatJID: "967772222222@s.whatsapp.net", MessageID: "m2", Text: "second"})
+	r.Emit(Envelope{Type: EventMessage, AccountID: 3, ChatJID: "967773333333@s.whatsapp.net", MessageID: "m3", Text: "third"})
+
+	// Peek twice without Ack: queue MUST still contain all 3 messages (simulating JNI/DB failure before Ack)
+	peek1 := r.Peek(2)
+	peek2 := r.Peek(2)
+	if len(peek1) != 2 || len(peek2) != 2 || peek1[0].Seq != peek2[0].Seq {
+		t.Fatalf("expected non-destructive Peek, got %+v vs %+v", peek1, peek2)
+	}
+	if r.PendingCount() != 3 {
+		t.Fatalf("expected 3 unacked events, got %d", r.PendingCount())
+	}
+
+	// Ack first 2 events; 3rd must remain intact
+	acked := r.Ack(peek1[1].Seq)
+	if acked != 2 || r.PendingCount() != 1 {
+		t.Fatalf("expected 2 acked and 1 remaining, got acked=%d pending=%d", acked, r.PendingCount())
+	}
+	rem := r.Peek(10)
+	if len(rem) != 1 || rem[0].MessageID != "m3" {
+		t.Fatalf("expected m3 remaining, got %+v", rem)
+	}
+}
+
+func TestCriticalEventsNeverEvictedByEphemeralTypingFlood(t *testing.T) {
+	r := NewRouter(4)
+	r.Emit(Envelope{Type: EventMessage, AccountID: 1, ChatJID: "967770000001@s.whatsapp.net", MessageID: "keep_1"})
+	r.Emit(Envelope{Type: EventTyping, AccountID: 1, ChatJID: "967770000001@s.whatsapp.net", IsTyping: true})
+	r.Emit(Envelope{Type: EventTyping, AccountID: 2, ChatJID: "967770000002@s.whatsapp.net", IsTyping: true})
+	r.Emit(Envelope{Type: EventTyping, AccountID: 3, ChatJID: "967770000003@s.whatsapp.net", IsTyping: true})
+	// Queue is now at capacity (4). Emitting critical messages must evict typing, never keep_1!
+	r.Emit(Envelope{Type: EventMessage, AccountID: 2, ChatJID: "967770000002@s.whatsapp.net", MessageID: "keep_2"})
+	r.Emit(Envelope{Type: EventMessage, AccountID: 3, ChatJID: "967770000003@s.whatsapp.net", MessageID: "keep_3"})
+
+	batch := r.Poll(10)
+	found := map[string]bool{}
+	for _, ev := range batch {
+		if ev.Type == EventMessage {
+			found[ev.MessageID] = true
+		}
+	}
+	if !found["keep_1"] || !found["keep_2"] || !found["keep_3"] {
+		t.Fatalf("critical message lost during ephemeral flood: %+v", found)
+	}
+}
+
 func TestFourAccountIsolationOnIdenticalChatAndMessageIDs(t *testing.T) {
 	r := NewRouter(256)
 	sharedChat := "967771234567@s.whatsapp.net"
