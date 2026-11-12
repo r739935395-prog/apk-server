@@ -1,0 +1,332 @@
+=== CI DIAGNOSTIC FAILURE LOG (v1.1.0) ===
+=== GO VERSION ===
+go version go1.27.4 linux/amd64
+=== GO MOD TIDY ===
+go: downloading go.mau.fi/whatsmeow v0.0.0-20261110152934-c88388f983b4
+go: downloading google.golang.org/protobuf v1.36.12
+go: downloading github.com/mattn/go-sqlite3 v1.14.53
+go: downloading github.com/beeper/argo-go v1.1.2
+go: downloading github.com/google/uuid v1.6.0
+go: downloading github.com/rs/zerolog v1.35.1
+go: downloading go.mau.fi/libsignal v0.2.2
+go: downloading go.mau.fi/util v0.11.0
+go: downloading golang.org/x/crypto v0.58.0
+go: downloading golang.org/x/sync v0.24.0
+go: downloading golang.org/x/net v0.61.0
+go: downloading github.com/elliotchance/orderedmap/v3 v3.1.0
+go: downloading github.com/vektah/gqlparser/v2 v2.5.27
+go: downloading github.com/mattn/go-colorable v0.1.14
+go: downloading filippo.io/edwards25519 v1.2.0
+go: downloading github.com/google/go-cmp v0.7.0
+go: downloading golang.org/x/sys v0.49.0
+go: downloading github.com/stretchr/testify v1.12.0
+go: downloading github.com/coder/websocket v1.8.15
+go: downloading github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b
+go: downloading golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e
+go: downloading github.com/DATA-DOG/go-sqlmock v1.5.2
+go: downloading github.com/mattn/go-isatty v0.0.20
+go: downloading github.com/andreyvit/diff v0.0.0-20170406064948-c7f18ee00883
+go: downloading golang.org/x/text v0.43.0
+go: downloading gopkg.in/yaml.v3 v3.0.1
+go: downloading github.com/sergi/go-diff v1.3.1
+go: downloading github.com/agnivade/levenshtein v1.2.1
+=== GO UNIT & RACE DETECTOR TESTS ===
+=== RUN   TestBridgeLifecyclePeekAckAndFourAccountSnapshots
+--- PASS: TestBridgeLifecyclePeekAckAndFourAccountSnapshots (0.00s)
+PASS
+ok  	whatshub/android-bridge	1.029s
+?   	whatshub/cmd/libwhatshub	[no test files]
+=== RUN   TestRouterRejectsInvalidAccountIDs
+--- PASS: TestRouterRejectsInvalidAccountIDs (0.00s)
+=== RUN   TestPeekAndAckDurabilityPreservesUnackedEvents
+--- PASS: TestPeekAndAckDurabilityPreservesUnackedEvents (0.00s)
+=== RUN   TestCriticalEventsNeverEvictedByEphemeralTypingFlood
+--- PASS: TestCriticalEventsNeverEvictedByEphemeralTypingFlood (0.00s)
+=== RUN   TestFourAccountIsolationOnIdenticalChatAndMessageIDs
+--- PASS: TestFourAccountIsolationOnIdenticalChatAndMessageIDs (0.00s)
+=== RUN   TestSanitizeLogLineNeverLeaksSecrets
+--- PASS: TestSanitizeLogLineNeverLeaksSecrets (0.00s)
+PASS
+ok  	whatshub/events	1.017s
+=== RUN   TestParseTextAndQuotedReply
+--- PASS: TestParseTextAndQuotedReply (0.00s)
+=== RUN   TestParseDeviceSentEditedLocationContactAndPoll
+--- PASS: TestParseDeviceSentEditedLocationContactAndPoll (0.00s)
+=== RUN   TestParseEphemeralWrappedVoiceAndSticker
+--- PASS: TestParseEphemeralWrappedVoiceAndSticker (0.00s)
+=== RUN   TestParseReactionAndRevoke
+--- PASS: TestParseReactionAndRevoke (0.00s)
+=== RUN   TestParseRecipientJIDStripsDeviceSuffix
+--- PASS: TestParseRecipientJIDStripsDeviceSuffix (0.00s)
+PASS
+ok  	whatshub/messaging	1.021s
+=== RUN   TestBackoffExponentialProgressionCeilingAndMaxAttempts
+--- PASS: TestBackoffExponentialProgressionCeilingAndMaxAttempts (0.00s)
+=== RUN   TestEncryptedSlotContainerSealsKeysAndSessionsOnDisk
+--- PASS: TestEncryptedSlotContainerSealsKeysAndSessionsOnDisk (0.03s)
+=== RUN   TestFourAccountIsolationDisconnectRemoveAndSessionRestore
+--- PASS: TestFourAccountIsolationDisconnectRemoveAndSessionRestore (0.05s)
+=== RUN   TestLIDToPNMappingReceiptCorrelationAndDeviceSentEcho
+--- PASS: TestLIDToPNMappingReceiptCorrelationAndDeviceSentEcho (0.01s)
+PASS
+ok  	whatshub/session	1.116s
+=== RUN   TestHistorySyncDeduplicationOrderingAndAccountIsolation
+--- PASS: TestHistorySyncDeduplicationOrderingAndAccountIsolation (0.00s)
+=== RUN   TestHistorySyncLIDToPNCanonicalResolution
+--- PASS: TestHistorySyncLIDToPNCanonicalResolution (0.00s)
+PASS
+ok  	whatshub/synchronization	1.020s
+--- NDK ---
+-rw-r--r-- 1 runner runner 17M Nov 12 09:23 ../app/src/main/jniLibs/arm64-v8a/libwhatshub_engine.so
+../app/src/main/jniLibs/arm64-v8a/libwhatshub_engine.so: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, Go BuildID=qR8FwkrJN27pNNhbkmJT/NiUBVeuHpm-6KAi86nKY/n-6oYo3yYR31YpqyxQus/DOFXryZVYL0wbvwRaDbG, BuildID[sha1]=8ecff9f087a96d12043e530fdeedaf5f94208156, stripped
+=== ELF LOAD SEGMENT ALIGNMENT (16 KB = 0x4000) ===
+                 FileSiz            MemSiz              Flags  Align
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+  LOAD           0x000000000076f4e0 0x00000000007734e0 0x00000000007734e0
+  LOAD           0x0000000000dc7880 0x0000000000dcf880 0x0000000000dcf880
+  LOAD           0x0000000000fdfb80 0x0000000000febb80 0x0000000000febb80
+=== EXPORTED JNI SYMBOLS ===
+   152: 0000000000cb43b8   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativePollEvents
+   202: 0000000000cb45b8   152 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeRevokeMessage
+   213: 0000000000cb4650   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeDownloadMedia
+   215: 0000000000cb4198   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeRemoveAccount
+   229: 0000000000cb4424   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendText
+   258: 0000000000cb48d4   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetGroupInfo
+   280: 0000000000cb4204   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeRequestPairingCode
+   297: 0000000000cb47fc   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetContacts
+   307: 0000000000cb4764   152 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendTyping
+   316: 0000000000cb451c   156 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendReaction
+   321: 0000000000cb42e4   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativePeekEvents
+   331: 0000000000cb44a0   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendMedia
+   364: 0000000000cb4868   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetGroups
+   388: 0000000000cb4280   100 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetAccountsSnapshot
+   408: 0000000000cb40c0   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeConnectAccount
+   413: 0000000000cb3f64   100 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeVersion
+   414: 0000000000cb4950   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeOnNetworkChanged
+   429: 0000000000cb4a28   100 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeShutdown
+   453: 0000000000cb46cc   152 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeMarkRead
+   499: 0000000000cb4044   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSetSlotKey
+   526: 0000000000cb4350   104 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeAckEvents
+   549: 0000000000cb3fc8   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeInit
+   571: 0000000000cb49bc   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSetDebugLogging
+   577: 0000000000cb412c   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeDisconnectAccount
+--- GRADLE TEST ---
+> Configure project :
+> Configure project :app
+> Task :app:buildKotlinToolingMetadata
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:generateReleaseBuildConfig
+> Task :app:checkReleaseAarMetadata
+> Task :app:generateReleaseResValues
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:generateReleaseResources
+> Task :app:packageReleaseResources
+> Task :app:mergeReleaseResources
+> Task :app:parseReleaseLocalResources
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:preReleaseUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileReleaseUnitTest
+> Task :app:javaPreCompileRelease
+> Task :app:mergeReleaseShaders
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets
+> Task :app:processReleaseManifestForPackage
+> Task :app:processReleaseResources
+> Task :app:compileReleaseKotlin
+> Task :app:packageReleaseUnitTestForUnitTest
+> Task :app:generateReleaseUnitTestConfig
+> Task :app:compileReleaseKotlin
+> Task :app:compileReleaseJavaWithJavac
+> Task :app:processReleaseJavaRes
+> Task :app:bundleReleaseClassesToCompileJar
+> Task :app:bundleReleaseClassesToRuntimeJar
+> Task :app:compileReleaseUnitTestKotlin
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/bridge/FourAccountIntegrationTest.kt:5:37 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/bridge/FourAccountIntegrationTest.kt:160:49 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/database/WhatsAppHubDatabaseTest.kt:5:37 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/database/WhatsAppHubDatabaseTest.kt:29:23 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:7:37 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:19:34 Unresolved reference 'decodeEnvelopeArraySafely'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:203:64 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:552:24 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:730:64 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:755:29 Unresolved reference 'decodeEnvelopeArraySafely'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:758:62 Unresolved reference 'text'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:759:61 Unresolved reference 'text'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:772:58 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+> Task :app:compileReleaseUnitTestKotlin FAILED
+FAILURE: Build failed with an exception.
+* What went wrong:
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+> Run with --stacktrace option to get the stack trace.
+> Run with --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+BUILD FAILED in 1m 48s
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/robolectric/4.13/8fb54d67fe046127c20b491acfde2cc6a5260fa0/robolectric-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/8.9/transforms/62a19e22d35388c1134ff615c4fa9dea/transformed/monitor-1.7.1-api.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/androidx.concurrent/concurrent-futures/1.1.0/50b7fb98350d5f42a4e49704b03278542293ba48/concurrent-futures-1.1.0.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/junit/4.13/773b7122ad642110b009aadfd9ac9b9a18e93d2a/junit-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/junit/junit/4.13.2/8ac9e16d933b6fb43bc7f576336b8f4d7eb5ba12/junit-4.13.2.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/resources/4.13/3f89df602a7bbc4532f678a18e697f0456256d0d/resources-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/sandbox/4.13/af9a4d64c6bd4f513eea9f3dac0bb5e775f4e617/sandbox-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/utils-reflector/4.13/99f92eb72e7f7d87361a06c2002ac31feb965913/utils-reflector-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/nativeruntime/4.13/9e110c91100092fd4f73e579f1b95bbb3ae712c1/nativeruntime-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/plugins-maven-dependency-resolver/4.13/eae1824f0088be596220186ee96effb72998d68a/plugins-maven-dependency-resolver-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/shadowapi/4.13/b78efbf9d3d341c3371514ceb8288f26d68a2d3f/shadowapi-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/utils/4.13/47f61b1a3cf0b5646f68d3c4961ccf11c2f31463/utils-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/pluginapi/4.13/7310a12eb06941ceec5e2a37a6cbcb7fae97824f/pluginapi-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/shadows-framework/4.13/f37f6a20295b6b21164998b610a221dbb2bb7c81/shadows-framework-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.google.guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/b421526c5f297295adef1c886e5246c39d4ac629/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/8.9/transforms/34b8f5cd997c5accdeeb802afb66e8f8/transformed/tracing-1.2.0-api.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.hamcrest/hamcrest-core/1.3/42a25dc3219429f0e5d060061f71acb49bf010a0/hamcrest-core-1.3.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.google.guava/failureaccess/1.0.1/1dcf1de382a0bf95a3d8b0849546c88bac1292c9/failureaccess-1.0.1.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.robolectric/annotations/4.13/714fb8aacd7be8c497325dad2bb1b3754e6b2a34/annotations-4.13.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.google.code.findbugs/jsr305/3.0.2/25ea2e8b0c338a877313bd4672d3fe056ea78f0d/jsr305-3.0.2.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.google.errorprone/error_prone_annotations/2.11.0/c5a0ace696d3f8b1c1d8cc036d8c03cc0cbe6b69/error_prone_annotations-2.11.0.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.checkerframework/checker-qual/3.12.0/d5692f0526415fcc6de94bb5bfbd3afd9dd3b3e5/checker-qual-3.12.0.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.google.j2objc/j2objc-annotations/1.3/ba035118bc8bac37d7eff77700720999acd9986d/j2objc-annotations-1.3.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/javax.inject/javax.inject/1/6975da39a7040257bd51d21a231b76c915872d38/javax.inject-1.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/javax.annotation/javax.annotation-api/1.3.2/934c04d3cfef185a8008e7bf34331b79730a9d43/javax.annotation-api-1.3.2.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm-commons/9.7/e86dda4696d3c185fcc95d8d311904e7ce38a53f/asm-commons-9.7.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm-util/9.7/c0655519f24d92af2202cb681cd7c1569df6ead6/asm-util-9.7.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm-analysis/9.7/e4a258b7eb96107106c0599f0061cfc1832fe07a/asm-analysis-9.7.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm-tree/9.7/e446a17b175bfb733b87c5c2560ccb4e57d69f1a/asm-tree-9.7.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm/9.7/73d7b3086e14beb604ced229c302feff6449723/asm-9.7.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.google.auto.value/auto-value-annotations/1.11.0/f0d047931d07cfbc6fa4079854f181ff62891d6f/auto-value-annotations-1.11.0.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.almworks.sqlite4java/sqlite4java/1.0.392/d6234e08ff4e1607ff5321da2579571f05ff778d/sqlite4java-1.0.392.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.google.guava/guava/31.1-jre/60458f877d055d0c9114d9e1a2efb737b4bc282c/guava-31.1-jre.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/org.bouncycastle/bcprov-jdk18on/1.78.1/39e9e45359e20998eb79c1828751f94a818d25f8/bcprov-jdk18on-1.78.1.jar because:
+  Build cache is disabled
+Caching disabled for BuildToolsApiClasspathEntrySnapshotTransform: /home/runner/.gradle/caches/modules-2/files-2.1/com.ibm.icu/icu4j/75.1/e8f8dcc2967f5ec2cfae185172293adfa5599b78/icu4j-75.1.jar because:
+  Build cache is disabled
+Caching disabled for task ':app:compileReleaseUnitTestKotlin' because:
+  Build cache is disabled
+Task ':app:compileReleaseUnitTestKotlin' is not up-to-date because:
+  No history is available.
+The input changes require a full rebuild for incremental task ':app:compileReleaseUnitTestKotlin'.
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/releaseUnitTest/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/releaseUnitTest/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/releaseUnitTest/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/releaseUnitTest/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/releaseUnitTest/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/kotlin', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+file or directory '/home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/testRelease/java', not found
+Kotlin source files: /home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/bridge/FourAccountIntegrationTest.kt, /home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt, /home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/security/SecurityAndBackupTest.kt, /home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/database/WhatsAppHubDatabaseTest.kt
+Java source files: 
+Script source files: 
+Script file extensions: 
+Using Kotlin/JVM incremental compilation
+[KOTLIN] Kotlin compilation 'jdkHome' argument: null
+Options for KOTLIN DAEMON: IncrementalCompilationOptions(super=CompilationOptions(compilerMode=INCREMENTAL_COMPILER, targetPlatform=JVM, reportCategories=[0, 3], reportSeverity=2, requestedCompilationResults=[0], kotlinScriptExtensions=[]), areFileChangesKnown=false, modifiedFiles=null, deletedFiles=null, classpathChanges=NotAvailableForNonIncrementalRun, workingDir=/home/runner/work/apk-server/apk-server/WhatsAppHub/app/build/kotlin/compileReleaseUnitTestKotlin/cacheable, multiModuleICSettings=MultiModuleICSettings(buildHistoryFile=/home/runner/work/apk-server/apk-server/WhatsAppHub/app/build/kotlin/compileReleaseUnitTestKotlin/local-state/build-history.bin, useModuleDetection=true), usePreciseJavaTracking=true, icFeatures=IncrementalCompilationFeatures(withAbiSnapshot=false, preciseCompilationResultsBackup=true, keepIncrementalCompilationCachesInMemory=true, enableUnsafeIncrementalCompilationForMultiplatform=false), outputFiles=[/home/runner/work/apk-server/apk-server/WhatsAppHub/app/build/tmp/kotlin-classes/releaseUnitTest, /home/runner/work/apk-server/apk-server/WhatsAppHub/app/build/kotlin/compileReleaseUnitTestKotlin/cacheable, /home/runner/work/apk-server/apk-server/WhatsAppHub/app/build/kotlin/compileReleaseUnitTestKotlin/local-state])
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/bridge/FourAccountIntegrationTest.kt:5:37 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/bridge/FourAccountIntegrationTest.kt:160:49 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/database/WhatsAppHubDatabaseTest.kt:5:37 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/database/WhatsAppHubDatabaseTest.kt:29:23 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:7:37 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:19:34 Unresolved reference 'decodeEnvelopeArraySafely'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:203:64 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:552:24 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:730:64 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:755:29 Unresolved reference 'decodeEnvelopeArraySafely'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:758:62 Unresolved reference 'text'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:759:61 Unresolved reference 'text'.
+e: file:///home/runner/work/apk-server/apk-server/WhatsAppHub/app/src/test/java/com/rafat/whatshub/reliability/MessagingReliabilityAndMigrationV11Test.kt:772:58 Unresolved reference 'FrameworkSQLiteOpenHelperFactory'.
+Finished executing kotlin compiler using DAEMON strategy
+
+> Task :app:compileReleaseUnitTestKotlin FAILED
+AAPT2 aapt2-8.7.2-12006047-linux Daemon #0: shutdown
+AAPT2 aapt2-8.7.2-12006047-linux Daemon #1: shutdown
+AAPT2 aapt2-8.7.2-12006047-linux Daemon #2: shutdown
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileReleaseUnitTestKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 1m 48s
+27 actionable tasks: 27 executed
+--- APK BUILD ---
