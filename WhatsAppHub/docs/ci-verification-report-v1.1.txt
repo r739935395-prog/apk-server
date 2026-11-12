@@ -1,0 +1,210 @@
+Rafat Hub v1.1.0 (versionCode=2) CI Build & Verification Report
+===============================================================
+=== GO VERSION ===
+go version go1.27.4 linux/amd64
+=== GO MOD TIDY ===
+go: downloading go.mau.fi/whatsmeow v0.0.0-20261110152934-c88388f983b4
+go: downloading google.golang.org/protobuf v1.36.12
+go: downloading github.com/mattn/go-sqlite3 v1.14.53
+go: downloading github.com/beeper/argo-go v1.1.2
+go: downloading github.com/google/uuid v1.6.0
+go: downloading github.com/rs/zerolog v1.35.1
+go: downloading go.mau.fi/libsignal v0.2.2
+go: downloading go.mau.fi/util v0.11.0
+go: downloading golang.org/x/crypto v0.58.0
+go: downloading golang.org/x/net v0.61.0
+go: downloading golang.org/x/sync v0.24.0
+go: downloading github.com/elliotchance/orderedmap/v3 v3.1.0
+go: downloading github.com/vektah/gqlparser/v2 v2.5.27
+go: downloading filippo.io/edwards25519 v1.2.0
+go: downloading github.com/mattn/go-colorable v0.1.14
+go: downloading github.com/stretchr/testify v1.12.0
+go: downloading golang.org/x/sys v0.49.0
+go: downloading github.com/coder/websocket v1.8.15
+go: downloading github.com/google/go-cmp v0.7.0
+go: downloading github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b
+go: downloading golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e
+go: downloading github.com/DATA-DOG/go-sqlmock v1.5.2
+go: downloading github.com/mattn/go-isatty v0.0.20
+go: downloading github.com/andreyvit/diff v0.0.0-20170406064948-c7f18ee00883
+go: downloading github.com/sergi/go-diff v1.3.1
+go: downloading gopkg.in/yaml.v3 v3.0.1
+go: downloading golang.org/x/text v0.43.0
+go: downloading github.com/agnivade/levenshtein v1.2.1
+=== GO UNIT & RACE DETECTOR TESTS ===
+=== RUN   TestBridgeLifecyclePeekAckAndFourAccountSnapshots
+--- PASS: TestBridgeLifecyclePeekAckAndFourAccountSnapshots (0.00s)
+PASS
+ok  	whatshub/android-bridge	1.037s
+?   	whatshub/cmd/libwhatshub	[no test files]
+=== RUN   TestRouterRejectsInvalidAccountIDs
+--- PASS: TestRouterRejectsInvalidAccountIDs (0.00s)
+=== RUN   TestPeekAndAckDurabilityPreservesUnackedEvents
+--- PASS: TestPeekAndAckDurabilityPreservesUnackedEvents (0.00s)
+=== RUN   TestCriticalEventsNeverEvictedByEphemeralTypingFlood
+--- PASS: TestCriticalEventsNeverEvictedByEphemeralTypingFlood (0.00s)
+=== RUN   TestFourAccountIsolationOnIdenticalChatAndMessageIDs
+--- PASS: TestFourAccountIsolationOnIdenticalChatAndMessageIDs (0.00s)
+=== RUN   TestSanitizeLogLineNeverLeaksSecrets
+--- PASS: TestSanitizeLogLineNeverLeaksSecrets (0.00s)
+PASS
+ok  	whatshub/events	1.022s
+=== RUN   TestParseTextAndQuotedReply
+--- PASS: TestParseTextAndQuotedReply (0.00s)
+=== RUN   TestParseDeviceSentEditedLocationContactAndPoll
+--- PASS: TestParseDeviceSentEditedLocationContactAndPoll (0.00s)
+=== RUN   TestParseEphemeralWrappedVoiceAndSticker
+--- PASS: TestParseEphemeralWrappedVoiceAndSticker (0.00s)
+=== RUN   TestParseReactionAndRevoke
+--- PASS: TestParseReactionAndRevoke (0.00s)
+=== RUN   TestParseRecipientJIDStripsDeviceSuffix
+--- PASS: TestParseRecipientJIDStripsDeviceSuffix (0.00s)
+PASS
+ok  	whatshub/messaging	1.029s
+=== RUN   TestBackoffExponentialProgressionCeilingAndMaxAttempts
+--- PASS: TestBackoffExponentialProgressionCeilingAndMaxAttempts (0.00s)
+=== RUN   TestEncryptedSlotContainerSealsKeysAndSessionsOnDisk
+--- PASS: TestEncryptedSlotContainerSealsKeysAndSessionsOnDisk (0.03s)
+=== RUN   TestFourAccountIsolationDisconnectRemoveAndSessionRestore
+--- PASS: TestFourAccountIsolationDisconnectRemoveAndSessionRestore (0.07s)
+=== RUN   TestLIDToPNMappingReceiptCorrelationAndDeviceSentEcho
+--- PASS: TestLIDToPNMappingReceiptCorrelationAndDeviceSentEcho (0.01s)
+PASS
+ok  	whatshub/session	1.136s
+=== RUN   TestHistorySyncDeduplicationOrderingAndAccountIsolation
+--- PASS: TestHistorySyncDeduplicationOrderingAndAccountIsolation (0.00s)
+=== RUN   TestHistorySyncLIDToPNCanonicalResolution
+--- PASS: TestHistorySyncLIDToPNCanonicalResolution (0.00s)
+PASS
+ok  	whatshub/synchronization	1.024s
+
+-rw-r--r-- 1 runner runner 17M Nov 12 09:29 ../app/src/main/jniLibs/arm64-v8a/libwhatshub_engine.so
+../app/src/main/jniLibs/arm64-v8a/libwhatshub_engine.so: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, Go BuildID=GIWOONJka-Mc290IkOxS/wNVJTX88KRAGFY1qp_sI/n-6oYo3yYR31YpqyxQus/abDHcXQN-DUj6yPX0PNL, BuildID[sha1]=9422a10d7ff25ded9f4fbc4503097c73a2473fd9, stripped
+=== ELF LOAD SEGMENT ALIGNMENT (16 KB = 0x4000) ===
+                 FileSiz            MemSiz              Flags  Align
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+  LOAD           0x000000000076f4e0 0x00000000007734e0 0x00000000007734e0
+  LOAD           0x0000000000dc7880 0x0000000000dcf880 0x0000000000dcf880
+  LOAD           0x0000000000fdfb80 0x0000000000febb80 0x0000000000febb80
+=== EXPORTED JNI SYMBOLS ===
+   152: 0000000000cb43b8   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativePollEvents
+   202: 0000000000cb45b8   152 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeRevokeMessage
+   213: 0000000000cb4650   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeDownloadMedia
+   215: 0000000000cb4198   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeRemoveAccount
+   229: 0000000000cb4424   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendText
+   258: 0000000000cb48d4   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetGroupInfo
+   280: 0000000000cb4204   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeRequestPairingCode
+   297: 0000000000cb47fc   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetContacts
+   307: 0000000000cb4764   152 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendTyping
+   316: 0000000000cb451c   156 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendReaction
+   321: 0000000000cb42e4   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativePeekEvents
+   331: 0000000000cb44a0   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSendMedia
+   364: 0000000000cb4868   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetGroups
+   388: 0000000000cb4280   100 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeGetAccountsSnapshot
+   408: 0000000000cb40c0   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeConnectAccount
+   413: 0000000000cb3f64   100 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeVersion
+   414: 0000000000cb4950   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeOnNetworkChanged
+   429: 0000000000cb4a28   100 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeShutdown
+   453: 0000000000cb46cc   152 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeMarkRead
+   499: 0000000000cb4044   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSetSlotKey
+   526: 0000000000cb4350   104 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeAckEvents
+   549: 0000000000cb3fc8   124 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeInit
+   571: 0000000000cb49bc   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeSetDebugLogging
+   577: 0000000000cb412c   108 FUNC    GLOBAL DEFAULT   15 Java_com_rafat_whatshub_bridge_NativeBridge_nativeDisconnectAccount
+
+=== JUNIT XML SUMMARY ===
+<testsuite name="com.rafat.whatshub.bridge.FourAccountIntegrationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-11-12T09:31:54" hostname="runnervm7aw5e" time="6.066">
+<testsuite name="com.rafat.whatshub.database.WhatsAppHubDatabaseTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-11-12T09:32:00" hostname="runnervm7aw5e" time="0.136">
+<testsuite name="com.rafat.whatshub.reliability.MessagingReliabilityAndMigrationV11Test" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-12T09:32:00" hostname="runnervm7aw5e" time="2.704">
+<testsuite name="com.rafat.whatshub.security.SecurityAndBackupTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-12T09:32:03" hostname="runnervm7aw5e" time="0.67">
+
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+
+> Task :app:minifyReleaseWithR8
+
+> Task :app:lintVitalReportRelease
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider$Companion#getService(Lcom/intellij/openapi/project/Project;)Lorg/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider#getDefaultLifetimeTokenFactory()Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getAnalysisSession(Lorg/jetbrains/kotlin/psi/KtElement;Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory;)Lorg/jetbrains/kotlin/analysis/api/KaSession;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#beforeEnteringAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#beforeEnteringAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider$Companion#getService(Lcom/intellij/openapi/project/Project;)Lorg/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider#getDefaultLifetimeTokenFactory()Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getAnalysisSession(Lorg/jetbrains/kotlin/psi/KtElement;Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory;)Lorg/jetbrains/kotlin/analysis/api/KaSession;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#beforeEnteringAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#beforeEnteringAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider$Companion#getService(Lcom/intellij/openapi/project/Project;)Lorg/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaDefaultLifetimeTokenProvider#getDefaultLifetimeTokenFactory()Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getAnalysisSession(Lorg/jetbrains/kotlin/psi/KtElement;Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory;)Lorg/jetbrains/kotlin/analysis/api/KaSession;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#beforeEnteringAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#beforeEnteringAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeTokenFactory#afterLeavingAnalysisContext(Lorg/jetbrains/kotlin/analysis/api/lifetime/KaLifetimeToken;)V
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/session/KaSessionProvider#getNoWriteActionInAnalyseCallChecker()Lorg/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker;
+WARNING: Missing analysis API method org/jetbrains/kotlin/analysis/api/lifetime/impl/NoWriteActionInAnalyseCallChecker#afterLeavingAnalysisContext()V
+
+> Task :app:lintVitalRelease
+> Task :app:compileReleaseArtProfile
+> Task :app:shrinkReleaseRes
+> Task :app:convertShrunkResourcesToBinaryRelease
+> Task :app:optimizeReleaseResources
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect
+> Task :app:assembleRelease
+
+BUILD SUCCESSFUL in 2m 13s
+51 actionable tasks: 30 executed, 21 up-to-date
+=== APK FILE METRICS ===
+-rw-r--r-- 1 runner runner 26M Nov 12 09:34 ./Rafat-Hub-v1.1.0-arm64-unsigned-aligned.apk
+d13d740e033c2cc1c41c7ddb46f09e641e2ce932bc86c2e35016d72c00ee2cd6  ./Rafat-Hub-v1.1.0-arm64-unsigned-aligned.apk
+=== AAPT2 BADGING ===
+package: name='com.rafat.whatshub' versionCode='2' versionName='1.1.0' platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35' compileSdkVersionCodename='15'
+targetSdkVersion:'35'
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+uses-permission: name='android.permission.WAKE_LOCK'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+uses-permission: name='android.permission.FOREGROUND_SERVICE_DATA_SYNC'
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+uses-permission: name='android.permission.RECORD_AUDIO'
+uses-permission: name='android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
+uses-permission: name='com.rafat.whatshub.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+application-label:'Rafat Hub'
+application-label-ar:'رافت هب'
+launchable-activity: name='com.rafat.whatshub.MainActivity'  label='' icon=''
+native-code: 'arm64-v8a'
+=== UNCOMPRESSED NATIVE LIBRARIES IN APK ===
+   10096  Stored    10096   0% 1981-01-01 01:01 9734baa0  lib/arm64-v8a/libandroidx.graphics.path.so
+ 5797528  Stored  5797528   0% 1981-01-01 01:01 6a91e9a2  lib/arm64-v8a/libsqlcipher.so
+17143144  Stored 17143144   0% 1981-01-01 01:01 93548ee1  lib/arm64-v8a/libwhatshub_engine.so
