@@ -8,8 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.rafat.whatshub.database.AccountRecord
 import com.rafat.whatshub.repository.EngineHealthTelemetry
 import com.rafat.whatshub.repository.HubRepository
+import com.rafat.whatshub.security.DiagnosticEntry
 import com.rafat.whatshub.security.PortableRestoreOutcome
-import com.rafat.whatshub.security.SanitizedLogEntry
 import com.rafat.whatshub.security.SanitizedLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,7 +34,7 @@ data class SettingsUiState(
     val mediaCacheBytes: Long = 0L,
     val engineVersion: String = "",
     val telemetry: EngineHealthTelemetry? = null,
-    val recentLogs: List<SanitizedLogEntry> = emptyList()
+    val recentLogs: List<DiagnosticEntry> = emptyList()
 )
 
 class SettingsViewModel(private val repository: HubRepository) : ViewModel() {

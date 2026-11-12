@@ -5,7 +5,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import com.rafat.whatshub.bridge.NativeEngineGateway
+import com.rafat.whatshub.bridge.JniWhatsAppEngineGateway
 import com.rafat.whatshub.database.WhatsAppHubDatabase
 import com.rafat.whatshub.repository.HubRepository
 import com.rafat.whatshub.security.KeystoreKeyManager
@@ -35,24 +35,18 @@ class WhatsAppHubApp : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
-        System.loadLibrary("sqlcipher")
 
-        keyManager = KeystoreKeyManager.createHardwareBacked(this)
-        val dbPassphrase = keyManager.getOrCreateDatabasePassphrase()
-        try {
-            database = WhatsAppHubDatabase.openEncrypted(this, dbPassphrase)
-        } finally {
-            dbPassphrase.fill(0)
-        }
+        keyManager = KeystoreKeyManager.fromContext(this)
+        database = WhatsAppHubDatabase.createEncrypted(this, keyManager)
 
         val sessionsDir = File(filesDir, "sessions")
         val mediaDir = File(filesDir, "media")
-        val caPemPath = exportSystemCaBundleToInternalFile()
+        val caPemPath = KeystoreKeyManager.exportAndroidSystemCaBundle(this)
 
         repository = HubRepository(
             database = database,
             keyManager = keyManager,
-            engine = NativeEngineGateway(),
+            engine = JniWhatsAppEngineGateway(),
             sessionsRootDir = sessionsDir,
             mediaRootDir = mediaDir,
             caCertPemPath = caPemPath,
@@ -71,10 +65,6 @@ class WhatsAppHubApp : Application(), ImageLoaderFactory {
         SanitizedLogger.info("App", "Rafat Hub v1.1.0 initialized with SQLCipher v2 & 4-account isolation")
     }
 
-    /**
-     * Memory + disk cached ImageLoader so local image/sticker bubbles render smoothly at 120Hz
-     * without re-decoding files during message status updates.
-     */
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
             .crossfade(false)
@@ -90,33 +80,5 @@ class WhatsAppHubApp : Application(), ImageLoaderFactory {
                     .build()
             }
             .build()
-    }
-
-    private fun exportSystemCaBundleToInternalFile(): String {
-        return runCatching {
-            val outFile = File(filesDir, "cacert_system.pem")
-            val systemCertsDir = File("/system/etc/security/cacerts")
-            if (systemCertsDir.isDirectory) {
-                val files = systemCertsDir.listFiles()?.sortedBy { it.name }.orEmpty()
-                if (files.isNotEmpty()) {
-                    outFile.bufferedWriter().use { writer ->
-                        for (certFile in files) {
-                            if (certFile.isFile) {
-                                val text = certFile.readText()
-                                val beginIdx = text.indexOf("-----BEGIN CERTIFICATE-----")
-                                val endMarker = "-----END CERTIFICATE-----"
-                                val endIdx = text.indexOf(endMarker)
-                                if (beginIdx >= 0 && endIdx > beginIdx) {
-                                    writer.write(text.substring(beginIdx, endIdx + endMarker.length))
-                                    writer.newLine()
-                                }
-                            }
-                        }
-                    }
-                    if (outFile.length() > 1024) return@runCatching outFile.absolutePath
-                }
-            }
-            ""
-        }.getOrDefault("")
     }
 }

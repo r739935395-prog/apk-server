@@ -573,6 +573,7 @@ class WhatsAppHubDatabase(
 
         val now = System.currentTimeMillis()
         var mergedChats = false
+        var mergedContact = false
 
         db.beginTransaction()
         try {
@@ -610,6 +611,7 @@ class WhatsAppHubDatabase(
             }
 
             if (lidContact != null) {
+                mergedContact = true
                 db.execSQL(
                     """
                     INSERT INTO contacts (account_id, contact_jid, full_name, first_name, push_name, business_name, is_online, last_seen_ms, lid_jid, pn_jid)
@@ -757,10 +759,27 @@ class WhatsAppHubDatabase(
             _jidMergeRedirects.tryEmit(Triple(accountId, lidJid, pnJid))
             bumpContactsGroups()
             bumpConversation(accountId, pnJid, alsoInbox = true)
-        } else if (lidContact != null) {
+        } else if (mergedContact) {
             bumpContactsGroups()
         }
         return mergedChats
+    }
+
+    fun observeConversationInvalidations(accountId: Int, chatJidRaw: String): kotlinx.coroutines.flow.Flow<Long> =
+        kotlinx.coroutines.flow.flow {
+            var tick = 0L
+            emit(tick)
+            conversationInvalidations.collect { (evAcct, _) ->
+                if (evAcct == accountId) {
+                    tick += 1L
+                    emit(tick)
+                }
+            }
+        }
+
+    fun getGroup(accountId: Int, groupJid: String): GroupRecord? {
+        val norm = IdentityResolver.normalizeJid(groupJid)
+        return getGroups(accountId).firstOrNull { IdentityResolver.normalizeJid(it.groupJid) == norm }
     }
 
     private fun recomputeChatPreviewInternal(accountId: Int, chatJid: String) {

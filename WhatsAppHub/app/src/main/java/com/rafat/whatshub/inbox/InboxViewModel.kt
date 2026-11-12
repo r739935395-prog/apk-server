@@ -20,10 +20,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class InboxFilterState(
-    val selectedAccountId: Int? = null, // null = Unified All-Accounts view
+    val selectedAccountId: Int? = null,
     val unreadOnly: Boolean = false,
     val showArchived: Boolean = false,
-    val chatType: String = "all",       // "all" | "groups" | "direct"
+    val chatType: String = "all",
     val searchQuery: String = ""
 )
 
@@ -43,24 +43,18 @@ class InboxViewModel(private val repository: HubRepository) : ViewModel() {
 
     val uiState: StateFlow<InboxUiState> = combine(
         repository.accounts,
-        repository.database.chatsInvalidations.debounce(35L),
+        repository.database.inboxInvalidations.debounce(35L),
         _filters
     ) { accounts, _, filters ->
-        val chats = repository.database.getUnifiedInbox(
+        val effectiveChatType = if (filters.showArchived) "archived" else filters.chatType
+        val chats = repository.database.getUnifiedInboxChats(
             accountFilter = filters.selectedAccountId,
             unreadOnly = filters.unreadOnly,
-            chatType = filters.chatType,
+            chatTypeFilter = effectiveChatType,
             searchQuery = filters.searchQuery,
             includeArchived = filters.showArchived
         )
-        val archivedCount = if (!filters.showArchived) {
-            repository.database.getUnifiedInbox(
-                accountFilter = filters.selectedAccountId,
-                includeArchived = true
-            ).size
-        } else {
-            chats.size
-        }
+        val archivedCount = repository.database.getArchivedChatCount(filters.selectedAccountId)
         val msgHits = if (filters.searchQuery.trim().length >= 2) {
             repository.database.searchMessagesGlobal(
                 query = filters.searchQuery,
@@ -70,7 +64,7 @@ class InboxViewModel(private val repository: HubRepository) : ViewModel() {
         } else {
             emptyList()
         }
-        val unreadSum = chats.sumOf { it.unreadCount }
+        val unreadSum = chats.sumOf { it.effectiveUnreadCount }
         InboxUiState(
             accounts = accounts,
             conversations = chats,
@@ -125,10 +119,10 @@ class InboxViewModel(private val repository: HubRepository) : ViewModel() {
 
     fun toggleUnreadState(chat: ChatSummaryRecord) {
         viewModelScope.launch(Dispatchers.IO) {
-            if (chat.unreadCount > 0) {
+            if (chat.effectiveUnreadCount > 0) {
                 repository.openAndMarkConversationRead(chat.accountId, chat.chatJid)
             } else {
-                repository.database.markChatUnread(chat.accountId, chat.chatJid)
+                repository.database.setChatMarkedUnread(chat.accountId, chat.chatJid, true)
             }
         }
     }

@@ -37,11 +37,10 @@ class ContactsGroupsViewModel(private val repository: HubRepository) : ViewModel
 
     val uiState: StateFlow<DirectoryUiState> = combine(
         repository.accounts,
-        repository.database.contactsInvalidations.debounce(40L),
-        repository.database.groupsInvalidations.debounce(40L),
+        repository.database.contactsGroupsInvalidations.debounce(40L),
         _selectedAccount,
         _searchQuery
-    ) { accounts, _, _, acctFilter, query ->
+    ) { accounts, _, acctFilter, query ->
         DirectoryUiState(
             accounts = accounts,
             selectedAccountFilter = acctFilter,

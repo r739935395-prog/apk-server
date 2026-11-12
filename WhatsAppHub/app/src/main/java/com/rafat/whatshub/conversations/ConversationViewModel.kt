@@ -88,11 +88,11 @@ class ConversationViewModel(
 
         val msgs = repository.database.getConversationMessages(accountId, canonicalJid, limit = limit)
         val searchHits = if (searchQuery.trim().isNotEmpty()) {
-            repository.database.searchMessagesInConversation(accountId, canonicalJid, searchQuery)
+            repository.database.searchConversationMessages(accountId, canonicalJid, searchQuery)
         } else {
             emptyList()
         }
-        val forwardChats = repository.database.getUnifiedInbox(includeArchived = false).take(40)
+        val forwardChats = repository.database.getUnifiedInboxChats(includeArchived = false).take(40)
 
         ConversationUiState(
             accountId = accountId,

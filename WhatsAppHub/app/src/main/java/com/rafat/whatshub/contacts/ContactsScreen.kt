@@ -139,8 +139,8 @@ fun ContactsScreen(
                     key = { "${it.accountId}:${it.contactJid}" }
                 ) { contact ->
                     val acctLabel = state.accounts.firstOrNull { it.accountId == contact.accountId }?.label
-                    val cleanName = contact.cleanDisplayName
-                    val verifiedPhone = contact.verifiedPhoneDisplay
+                    val cleanName = contact.displayName
+                    val verifiedPhone = contact.formattedPhone
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()

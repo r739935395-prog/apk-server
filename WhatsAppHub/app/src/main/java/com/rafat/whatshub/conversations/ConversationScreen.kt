@@ -252,14 +252,19 @@ fun ConversationScreen(
 
     val isGroup = IdentityResolver.isGroupJid(state.chatJid)
     val chatTitle = IdentityResolver.cleanDisplayTitle(
-        chatJid = state.chatJid,
-        storedTitle = state.chat?.title ?: state.group?.name ?: state.contact?.cleanDisplayName.orEmpty(),
-        verifiedPhoneJid = state.contact?.pnJid.orEmpty(),
-        fallbackPushName = state.contact?.pushName.orEmpty()
+        explicitNames = listOf(
+            state.chat?.title.orEmpty(),
+            state.group?.name.orEmpty(),
+            state.contact?.fullName.orEmpty(),
+            state.contact?.pushName.orEmpty()
+        ),
+        canonicalJid = state.chatJid,
+        verifiedPnJid = state.contact?.pnJid.orEmpty(),
+        isGroup = isGroup
     )
-    val verifiedPhoneSub = IdentityResolver.verifiedSubtitlePhone(
-        chatJid = state.chatJid,
-        verifiedPhoneJid = state.contact?.pnJid.orEmpty()
+    val verifiedPhoneSub = IdentityResolver.formatVerifiedPhone(
+        state.contact?.pnJid?.takeIf { it.isNotBlank() }
+            ?: if (IdentityResolver.isPhoneJid(state.chatJid)) state.chatJid else ""
     )
 
     val subtitle = when {

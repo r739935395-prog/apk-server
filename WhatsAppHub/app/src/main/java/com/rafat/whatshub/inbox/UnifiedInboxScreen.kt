@@ -450,7 +450,7 @@ private fun ConversationCard(
                         Text(
                             text = formatHubTimestamp(chat.lastMessageTsMs),
                             fontSize = 11.sp,
-                            color = if (chat.unreadCount > 0) acctColor else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (chat.effectiveUnreadCount > 0) acctColor else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
@@ -480,7 +480,7 @@ private fun ConversationCard(
 
                         AccountBadge(accountId = chat.accountId, label = accountLabel)
 
-                        if (chat.unreadCount > 0) {
+                        if (chat.effectiveUnreadCount > 0) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Box(
                                 modifier = Modifier
@@ -490,7 +490,7 @@ private fun ConversationCard(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = chat.unreadCount.coerceAtMost(999).toString(),
+                                    text = chat.effectiveUnreadCount.coerceAtMost(999).toString(),
                                     color = MaterialTheme.colorScheme.surface,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
@@ -534,7 +534,7 @@ private fun MessageSearchHitCard(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = hit.snippet,
+                text = hit.textSnippet,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,

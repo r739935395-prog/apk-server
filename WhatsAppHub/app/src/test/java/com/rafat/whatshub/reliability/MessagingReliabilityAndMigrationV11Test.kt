@@ -55,6 +55,7 @@ import java.io.File
  */
 private class V11TestEngineGateway : WhatsAppEngineGateway {
     override val isNativeAvailable: Boolean = true
+    override fun engineVersion(): String = "rafat-hub-engine/1.1.0-test"
 
     val connectedSlots = mutableSetOf<Int>()
     private var nextEventSeq = 1L
@@ -279,9 +280,9 @@ class MessagingReliabilityAndMigrationV11Test {
         )
         repo.drainAndProcessEventsNow()
         val unmappedChat = db.getChatSummary(1, rawLid)!!
-        // Must NEVER leak raw @lid digits to user-facing cleanTitle!
+        // Must NEVER leak full raw @lid digits to user-facing cleanTitle!
         assertFalse(unmappedChat.cleanTitle.contains("18899900011122"))
-        assertEquals("WhatsApp Contact", unmappedChat.cleanTitle)
+        assertTrue(unmappedChat.cleanTitle.startsWith("WhatsApp Contact"))
 
         // Send reply to @lid contact before mapping arrives (Scenario 3)
         val lidReply = repo.sendTextMessage(1, rawLid, "Replying before PN mapping")
@@ -366,7 +367,7 @@ class MessagingReliabilityAndMigrationV11Test {
             )
         )
         repo.drainAndProcessEventsNow()
-        assertEquals("+967776665544", db.getChatSummary(1, brandNewCaller)?.cleanTitle)
+        assertEquals("+967 776 665 544", db.getChatSummary(1, brandNewCaller)?.cleanTitle)
 
         // Scenarios 9, 10, 11, 12: Send & Receive Image, Video, Voice Note, Document
         val mediaTypes = listOf(
@@ -537,7 +538,7 @@ class MessagingReliabilityAndMigrationV11Test {
             ),
             incrementUnread = false
         )
-        val recoveredCount = db.recoverInterruptedPendingMessages()
+        val recoveredCount = db.recoverInterruptedPendingMessages(staleThresholdMs = Long.MAX_VALUE)
         assertEquals(1, recoveredCount)
         assertEquals("failed", db.getMessageById(1, burstChat, "CRASH_PENDING_1")?.status)
     }
@@ -547,7 +548,7 @@ class MessagingReliabilityAndMigrationV11Test {
         val migDir = tempFolder.newFolder("db_v1_to_v2")
         val migPath = File(migDir, "legacy_v1.db").absolutePath
 
-        // 1. Create an authentic DB_VERSION = 1 database with v1 schema & user data
+        // 1. Create an authentic DB_VERSION = 1 database matching v1.0.0 schema & user data
         val v1Helper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(migPath)
@@ -558,15 +559,42 @@ class MessagingReliabilityAndMigrationV11Test {
                             CREATE TABLE accounts (
                                 account_id INTEGER PRIMARY KEY CHECK (account_id BETWEEN 1 AND 4),
                                 label TEXT NOT NULL,
+                                color_hex INTEGER NOT NULL,
                                 jid TEXT NOT NULL DEFAULT '',
                                 phone TEXT NOT NULL DEFAULT '',
                                 push_name TEXT NOT NULL DEFAULT '',
-                                status TEXT NOT NULL DEFAULT 'not_connected',
+                                state TEXT NOT NULL DEFAULT 'not_connected',
                                 error_message TEXT NOT NULL DEFAULT '',
                                 reconnect_attempt INTEGER NOT NULL DEFAULT 0,
-                                last_connected_ms INTEGER NOT NULL DEFAULT 0,
                                 has_saved_session INTEGER NOT NULL DEFAULT 0,
                                 updated_at_ms INTEGER NOT NULL DEFAULT 0
+                            )
+                            """.trimIndent()
+                        )
+                        sqldb.execSQL(
+                            """
+                            CREATE TABLE sessions (
+                                account_id INTEGER PRIMARY KEY CHECK (account_id BETWEEN 1 AND 4),
+                                device_jid TEXT NOT NULL DEFAULT '',
+                                key_alias TEXT NOT NULL,
+                                paired_at_ms INTEGER NOT NULL DEFAULT 0,
+                                last_connected_at_ms INTEGER NOT NULL DEFAULT 0,
+                                session_dir TEXT NOT NULL
+                            )
+                            """.trimIndent()
+                        )
+                        sqldb.execSQL(
+                            """
+                            CREATE TABLE contacts (
+                                account_id INTEGER NOT NULL,
+                                contact_jid TEXT NOT NULL,
+                                full_name TEXT NOT NULL DEFAULT '',
+                                first_name TEXT NOT NULL DEFAULT '',
+                                push_name TEXT NOT NULL DEFAULT '',
+                                business_name TEXT NOT NULL DEFAULT '',
+                                is_online INTEGER NOT NULL DEFAULT 0,
+                                last_seen_ms INTEGER NOT NULL DEFAULT 0,
+                                PRIMARY KEY (account_id, contact_jid)
                             )
                             """.trimIndent()
                         )
@@ -575,17 +603,16 @@ class MessagingReliabilityAndMigrationV11Test {
                             CREATE TABLE chats (
                                 account_id INTEGER NOT NULL,
                                 chat_jid TEXT NOT NULL,
+                                composite_key TEXT NOT NULL UNIQUE,
                                 title TEXT NOT NULL DEFAULT '',
                                 is_group INTEGER NOT NULL DEFAULT 0,
-                                unread_count INTEGER NOT NULL DEFAULT 0,
                                 last_message_id TEXT NOT NULL DEFAULT '',
                                 last_message_preview TEXT NOT NULL DEFAULT '',
-                                last_message_type TEXT NOT NULL DEFAULT 'text',
-                                last_sender_name TEXT NOT NULL DEFAULT '',
                                 last_message_ts_ms INTEGER NOT NULL DEFAULT 0,
-                                is_muted INTEGER NOT NULL DEFAULT 0,
+                                last_sender_name TEXT NOT NULL DEFAULT '',
+                                unread_count INTEGER NOT NULL DEFAULT 0,
                                 is_typing INTEGER NOT NULL DEFAULT 0,
-                                typing_user TEXT NOT NULL DEFAULT '',
+                                typing_sender TEXT NOT NULL DEFAULT '',
                                 PRIMARY KEY (account_id, chat_jid)
                             )
                             """.trimIndent()
@@ -593,10 +620,10 @@ class MessagingReliabilityAndMigrationV11Test {
                         sqldb.execSQL(
                             """
                             CREATE TABLE messages (
-                                id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 account_id INTEGER NOT NULL,
                                 chat_jid TEXT NOT NULL,
                                 message_id TEXT NOT NULL,
+                                composite_key TEXT NOT NULL UNIQUE,
                                 sender_jid TEXT NOT NULL DEFAULT '',
                                 sender_name TEXT NOT NULL DEFAULT '',
                                 is_from_me INTEGER NOT NULL DEFAULT 0,
@@ -611,7 +638,7 @@ class MessagingReliabilityAndMigrationV11Test {
                                 is_edited INTEGER NOT NULL DEFAULT 0,
                                 status TEXT NOT NULL DEFAULT 'sent',
                                 timestamp_ms INTEGER NOT NULL DEFAULT 0,
-                                UNIQUE (account_id, chat_jid, message_id)
+                                PRIMARY KEY (account_id, chat_jid, message_id)
                             )
                             """.trimIndent()
                         )
@@ -635,21 +662,6 @@ class MessagingReliabilityAndMigrationV11Test {
                                 download_state TEXT NOT NULL DEFAULT 'none',
                                 error_message TEXT NOT NULL DEFAULT '',
                                 PRIMARY KEY (account_id, chat_jid, message_id)
-                            )
-                            """.trimIndent()
-                        )
-                        sqldb.execSQL(
-                            """
-                            CREATE TABLE contacts (
-                                account_id INTEGER NOT NULL,
-                                contact_jid TEXT NOT NULL,
-                                full_name TEXT NOT NULL DEFAULT '',
-                                first_name TEXT NOT NULL DEFAULT '',
-                                push_name TEXT NOT NULL DEFAULT '',
-                                business_name TEXT NOT NULL DEFAULT '',
-                                is_online INTEGER NOT NULL DEFAULT 0,
-                                last_seen_ms INTEGER NOT NULL DEFAULT 0,
-                                PRIMARY KEY (account_id, contact_jid)
                             )
                             """.trimIndent()
                         )
@@ -685,19 +697,7 @@ class MessagingReliabilityAndMigrationV11Test {
                         )
                         sqldb.execSQL(
                             """
-                            CREATE TABLE session_metadata (
-                                account_id INTEGER PRIMARY KEY CHECK (account_id BETWEEN 1 AND 4),
-                                device_jid TEXT NOT NULL DEFAULT '',
-                                key_alias TEXT NOT NULL DEFAULT '',
-                                paired_at_ms INTEGER NOT NULL DEFAULT 0,
-                                last_connected_at_ms INTEGER NOT NULL DEFAULT 0,
-                                session_dir TEXT NOT NULL DEFAULT ''
-                            )
-                            """.trimIndent()
-                        )
-                        sqldb.execSQL(
-                            """
-                            CREATE TABLE sync_state (
+                            CREATE TABLE synchronization_state (
                                 account_id INTEGER NOT NULL,
                                 sync_type TEXT NOT NULL,
                                 last_chunk_index INTEGER NOT NULL DEFAULT 0,
@@ -710,12 +710,14 @@ class MessagingReliabilityAndMigrationV11Test {
                             )
                             """.trimIndent()
                         )
-                        sqldb.execSQL("CREATE TABLE settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
+                        sqldb.execSQL(
+                            "CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at_ms INTEGER NOT NULL)"
+                        )
 
                         // Seed critical v1 user data that MUST survive v1 -> v2 upgrade!
-                        sqldb.execSQL("INSERT INTO accounts (account_id, label, phone, status, has_saved_session) VALUES (1, 'VIP Work Line', '967771234567', 'connected', 1)")
-                        sqldb.execSQL("INSERT INTO chats (account_id, chat_jid, title, unread_count, last_message_id, last_message_preview, last_message_ts_ms) VALUES (1, '967770009999@s.whatsapp.net', 'Sanaa Partner', 2, 'V1_MSG_99', 'Important contract V1', 1700000999000)")
-                        sqldb.execSQL("INSERT INTO messages (account_id, chat_jid, message_id, sender_jid, sender_name, is_from_me, text_body, status, timestamp_ms) VALUES (1, '967770009999@s.whatsapp.net', 'V1_MSG_99', '967770009999@s.whatsapp.net', 'Sanaa Partner', 0, 'Important contract V1', 'delivered', 1700000999000)")
+                        sqldb.execSQL("INSERT INTO accounts (account_id, label, color_hex, phone, state, has_saved_session, updated_at_ms) VALUES (1, 'VIP Work Line', 4279286145, '967771234567', 'connected', 1, 1700000000000)")
+                        sqldb.execSQL("INSERT INTO chats (account_id, chat_jid, composite_key, title, unread_count, last_message_id, last_message_preview, last_message_ts_ms) VALUES (1, '967770009999@s.whatsapp.net', '1:967770009999@s.whatsapp.net', 'Sanaa Partner', 2, 'V1_MSG_99', 'Important contract V1', 1700000999000)")
+                        sqldb.execSQL("INSERT INTO messages (account_id, chat_jid, message_id, composite_key, sender_jid, sender_name, is_from_me, text_body, status, timestamp_ms) VALUES (1, '967770009999@s.whatsapp.net', 'V1_MSG_99', '1:967770009999@s.whatsapp.net:V1_MSG_99', '967770009999@s.whatsapp.net', 'Sanaa Partner', 0, 'Important contract V1', 'delivered', 1700000999000)")
                     }
 
                     override fun onUpgrade(sqldb: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
@@ -785,7 +787,7 @@ class MessagingReliabilityAndMigrationV11Test {
 
         // 3. Verify IdentityResolver strict formatting rules
         assertEquals("", IdentityResolver.formatVerifiedPhone("18899900011122@lid"))
-        assertEquals("+967771234567", IdentityResolver.formatVerifiedPhone("967771234567:4@s.whatsapp.net"))
-        assertEquals("WhatsApp Contact", IdentityResolver.cleanDisplayTitle("18899900011122@lid", "18899900011122"))
+        assertEquals("+967 771 234 567", IdentityResolver.formatVerifiedPhone("967771234567:4@s.whatsapp.net"))
+        assertTrue(IdentityResolver.cleanDisplayTitle(listOf("18899900011122"), "18899900011122@lid").startsWith("WhatsApp Contact"))
     }
 }

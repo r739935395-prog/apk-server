@@ -55,8 +55,8 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     HubNavHost(
                         repository = repo,
-                        initialConversation = deepLinkConversation,
-                        onInitialConversationConsumed = { deepLinkConversation = null }
+                        deepLinkConversation = deepLinkConversation,
+                        onDeepLinkConsumed = { deepLinkConversation = null }
                     )
                 }
             }
