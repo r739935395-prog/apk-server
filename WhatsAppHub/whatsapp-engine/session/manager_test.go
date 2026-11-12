@@ -99,9 +99,15 @@ func TestFourAccountIsolationDisconnectRemoveAndSessionRestore(t *testing.T) {
 		})
 	}
 
-	delivered := router.Poll(64)
+	rawDelivered := router.Poll(64)
+	var delivered []events.Envelope
+	for _, ev := range rawDelivered {
+		if ev.Type == events.EventMessage {
+			delivered = append(delivered, ev)
+		}
+	}
 	if len(delivered) != 4 {
-		t.Fatalf("expected 4 isolated message events, got %d", len(delivered))
+		t.Fatalf("expected 4 isolated message events, got %d (raw=%d)", len(delivered), len(rawDelivered))
 	}
 	for i, ev := range delivered {
 		wantAcct := i + 1

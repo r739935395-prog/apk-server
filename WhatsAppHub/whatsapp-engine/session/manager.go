@@ -714,7 +714,7 @@ func (s *AccountSlot) handleWhatsmeowEvent(accountID int, rawEvt any) {
 		s.setStateLocked(events.StateConnected, "")
 		s.mu.Unlock()
 
-		if cli != nil {
+		if cli != nil && cli.IsConnected() {
 			_ = cli.SendPresence(context.Background(), types.PresenceAvailable)
 			go s.syncContactsAndGroups()
 		}
