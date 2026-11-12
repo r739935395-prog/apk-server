@@ -57,11 +57,9 @@ class WhatsAppHubApp : Application(), ImageLoaderFactory {
             repository.initializeEngineAndRestoreSessions()
         }
 
-        connectivityMonitor = ConnectivityMonitor(this) { isOnline ->
-            repository.onNetworkChanged(isOnline)
-        }.also { it.start() }
+        connectivityMonitor = ConnectivityMonitor(this, repository).also { it.start() }
 
-        SessionWatchdogWorker.schedulePeriodic(this)
+        SessionWatchdogWorker.schedule(this)
         SanitizedLogger.info("App", "Rafat Hub v1.1.0 initialized with SQLCipher v2 & 4-account isolation")
     }
 
